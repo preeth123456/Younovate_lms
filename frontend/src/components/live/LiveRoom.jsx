@@ -16,6 +16,7 @@ import {
 } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import '@livekit/components-styles';
+import { API_BASE_URL } from '../../config/api';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 const idOf = (t) => `${t?.participant?.identity ?? ''}:${t?.source ?? ''}`;
@@ -89,7 +90,7 @@ export default function LiveRoom({
   // Sync initial recording state from backend session
   useEffect(() => {
     if (!sessionId || !authToken) return undefined;
-    const API = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080';
+    const API = API_BASE_URL;
     const endpoint = sessionType === 'WORKSHOP'
       ? `${API}/api/workshop-sessions/${sessionId}`
       : `${API}/api/sessions/${sessionId}`;
@@ -281,7 +282,7 @@ export default function LiveRoom({
                    <button
                      onClick={async () => {
                        setRecordingError('');
-                       const base = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080';
+                       const base = API_BASE_URL;
                        const recBase = sessionType === 'WORKSHOP'
                          ? `${base}/api/workshop-sessions/${sessionId}`
                          : `${base}/api/trainer/sessions/${sessionId}`;

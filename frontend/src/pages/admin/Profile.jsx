@@ -7,8 +7,9 @@ import {
 } from "lucide-react";
 import "./Profile.css";
 import "./Profile_photo_input.css";
+import { API_BASE_URL } from "../../config/api";
 
-const BASE_URL = "http://localhost:8080";
+const BASE_URL = API_BASE_URL;
 
 const COMMON_EDITABLE_FIELDS = [
   "name", "phone", "bio", "linkedIn", "github", "gender",

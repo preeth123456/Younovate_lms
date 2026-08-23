@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
+import { API_BASE_URL } from '../../../config/api';
 
-const API = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080';
+const API = API_BASE_URL;
 
 const S = {
   page:  { padding: '20px 28px', fontFamily: 'Public Sans, system-ui, sans-serif', background: '#F1F5F9', minHeight: '100vh' },

@@ -10,6 +10,7 @@ import {
   selectAdminUsersStatus,
   selectAdminBatches,
 } from '../../features/admin/adminSlice';
+import { API_BASE_URL } from '../../config/api';
 
 // ── Role / status palette (same conventions as Sessions' SC) ──────────────────
 const ROLE_COLORS = {
@@ -159,7 +160,7 @@ export default function UserManagement() {
         }
         const token = authToken || localStorage.getItem('token') || sessionStorage.getItem('token');
         const response = await fetch(
-          `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'}/api/admin/users/${userId}`,
+          `${API_BASE_URL}/api/admin/users/${userId}`,
           {
             method: 'PUT',
             headers: {

@@ -4,8 +4,9 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useSelector } from 'react-redux';
+import { API_BASE_URL } from '../../config/api';
 
-const API = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080';
+const API = API_BASE_URL;
 
 const S = {
   page: { padding: '24px 28px', fontFamily: 'Inter, system-ui, sans-serif', background: '#F8FAFC', minHeight: '100vh' },

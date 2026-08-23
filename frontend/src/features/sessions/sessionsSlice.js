@@ -9,15 +9,10 @@
 // NOT exist here). '' falls back to the CRA dev proxy.
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
+import { API_BASE_URL } from '../../config/api';
 
 // ── Defensive base-URL resolver ──────────────────────────────────────────────
-function sanitizeBase(raw) {
-  if (!raw) return '';
-  let v = String(raw).split('#')[0].trim();          // kill inline comments
-  if (!/^https?:\/\//i.test(v)) return '';           // not a real URL -> use proxy
-  return v.replace(/\/+$/, '');                       // no trailing slash
-}
-const API = sanitizeBase(process.env.REACT_APP_API_BASE_URL);
+const API = API_BASE_URL;
 
 const authHeader = (getState) => ({
   headers: { Authorization: `Bearer ${getState().auth?.token || ''}` },

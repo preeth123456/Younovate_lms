@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { store } from '../app/store';
 import { setToken } from '../features/auth/authSlice';
+import { API_BASE_URL } from '../config/api';
 
-const API = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080';
+const API = API_BASE_URL;
 
 let isRefreshing = false;
 let failedQueue = [];

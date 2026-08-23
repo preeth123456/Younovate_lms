@@ -6,8 +6,9 @@ import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import { updateProfile, selectCurrentUser } from '../../features/auth/authSlice';
 import toast from 'react-hot-toast';
 import axios from 'axios';
+import { API_BASE_URL } from '../../config/api';
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+const API = API_BASE_URL;
 const BRAND = '#3f7da0';
 
 const TABS = [

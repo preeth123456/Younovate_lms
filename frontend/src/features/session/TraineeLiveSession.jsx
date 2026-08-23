@@ -8,8 +8,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useSelector } from 'react-redux';
 import axios from 'axios';
 import LiveRoom from '../../components/live/LiveRoom';
+import { API_BASE_URL } from '../../config/api';
 
-const API = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080';
+const API = API_BASE_URL;
 
 const TraineeLiveSession = ({ session, connection: connectionProp, onLeave }) => {
   const token = useSelector((s) => s.auth?.token || '');

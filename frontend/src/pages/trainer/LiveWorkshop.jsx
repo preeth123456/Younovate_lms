@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import axios from 'axios';
+import { API_BASE_URL } from '../../config/api';
 import {
   fetchTrainerWorkshops,
   startWorkshop,
@@ -152,7 +153,7 @@ export default function LiveWorkshop() {
     if (!sessionId) return;
     setRecording(r => ({ ...r, loading: true, error: '' }));
     try {
-      await axios.post(`${process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080'}/api/workshop-sessions/${sessionId}/recording/start`, {}, {
+      await axios.post(`${API_BASE_URL}/api/workshop-sessions/${sessionId}/recording/start`, {}, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       setRecording({ status: 'recording', loading: false, error: '' });
@@ -168,7 +169,7 @@ export default function LiveWorkshop() {
     if (!sessionId) return;
     setRecording({ status: 'processing', loading: true, error: '' });
     try {
-      await axios.post(`${process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080'}/api/workshop-sessions/${sessionId}/recording/stop`, {}, {
+      await axios.post(`${API_BASE_URL}/api/workshop-sessions/${sessionId}/recording/stop`, {}, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       setRecording({

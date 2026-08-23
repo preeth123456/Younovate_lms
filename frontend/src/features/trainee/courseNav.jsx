@@ -12,8 +12,9 @@
 import { useEffect, useState } from "react";
 import { useSelector } from "react-redux";
 import axios from "axios";
+import { API_BASE_URL } from "../../config/api";
 
-export const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+export const API = API_BASE_URL;
 
 // If you mount these routes somewhere other than /trainee/coursess, change this once.
 export const TRAINEE_BASE = "/trainee/coursess";

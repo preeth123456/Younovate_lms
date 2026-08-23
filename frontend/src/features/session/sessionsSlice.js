@@ -1,10 +1,11 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
+import { API_BASE_URL } from '../../config/api';
 
 // react-scripts (CRA) build → use process.env.REACT_APP_*  (import.meta.env is Vite-only
 // and throws under webpack). '' falls back to the CRA dev proxy in package.json.
 //const API = process.env.REACT_APP_API_BASE_URL || '';
-const API = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080';
+const API = API_BASE_URL;
 
 // ─── Auth header — reads from state.auth.token (same as adminSlice) ───────────
 const authHeader = (getState) => ({

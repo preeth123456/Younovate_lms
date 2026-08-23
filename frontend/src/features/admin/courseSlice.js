@@ -1,8 +1,9 @@
 // src/features/admin/courseSlice.js
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
+import { API_BASE_URL } from '../../config/api';
 
-const API = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080';
+const API = API_BASE_URL;
 
 // ─── Auth header — same pattern as adminSlice ─────────────────────────────────
 const authHeader = (getState) => ({

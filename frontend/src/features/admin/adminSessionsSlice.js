@@ -19,10 +19,11 @@
 
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
+import { API_BASE_URL } from '../../config/api';
 
 //const API = String(process.env.REACT_APP_API_BASE_URL || '').replace(/\/+$/, '');
 
-const API = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080';
+const API = API_BASE_URL;
 
 const authHeader = (getState) => {
   const token = getState().auth?.token || '';
