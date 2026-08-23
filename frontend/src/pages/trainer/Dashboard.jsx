@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import axios from 'axios';
+import { API_BASE_URL } from '../../config/api';
 
 // ── LiveKit (third-party real-time video) ─────────────────────────────────────
 import { LiveKitRoom, VideoConference } from '@livekit/components-react';
@@ -248,7 +249,7 @@ const LiveRoom = ({ session, isHost = false, onClose, onEndSession, initialToken
   // Sync recording status from backend
   useEffect(() => {
     if (!session._id || !authToken) return;
-    axios.get(`/api/trainer/sessions/${session._id}`, { headers: { Authorization: `Bearer ${authToken}` } })
+    axios.get(`${API_BASE_URL}/api/trainer/sessions/${session._id}`, { headers: { Authorization: `Bearer ${authToken}` } })
       .then(res => {
         const recStatus = res.data?.session?.recordingStatus;
         if (recStatus === 'recording') setRecordingState('recording');
@@ -264,13 +265,13 @@ const LiveRoom = ({ session, isHost = false, onClose, onEndSession, initialToken
     setRecordingLoading(true);
     try {
       if (recordingState === 'recording') {
-        const res = await axios.post(`/api/trainer/sessions/${session._id}/recording/stop`, {}, {
+        const res = await axios.post(`${API_BASE_URL}/api/trainer/sessions/${session._id}/recording/stop`, {}, {
           headers: { Authorization: `Bearer ${authToken}` },
         });
         if (res.data?.success) setRecordingState('processing');
         else setRecordingError(res.data?.message || 'Failed to stop recording');
       } else if (recordingState === 'none') {
-        const res = await axios.post(`/api/trainer/sessions/${session._id}/recording/start`, {}, {
+        const res = await axios.post(`${API_BASE_URL}/api/trainer/sessions/${session._id}/recording/start`, {}, {
           headers: { Authorization: `Bearer ${authToken}` },
         });
         if (res.data?.success) setRecordingState('recording');
@@ -296,7 +297,7 @@ const LiveRoom = ({ session, isHost = false, onClose, onEndSession, initialToken
         const identity = livekitIdentity(room, trainerName);
         const sessionId = session._id || session.id;
         const { data } = await axios.post(
-          `/api/livekit/token`,
+          `${API_BASE_URL}/api/livekit/token`,
           { room, sessionId, identity, name: trainerName },
           authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : undefined
         );
@@ -460,7 +461,7 @@ const SessionCard = ({ session, isLive }) => {
     setStarting(true);
     setActErr(null);
     try {
-      const { data } = await axios.post(`/api/sessions/${session._id}/start`, {}, authCfg);
+      const { data } = await axios.post(`${API_BASE_URL}/api/sessions/${session._id}/start`, {}, authCfg);
       dispatch(fetchTrainerSessions());
       if (data?.token) setLiveConn({ token: data.token, url: data.url });
       setLive(true);
@@ -474,7 +475,7 @@ const SessionCard = ({ session, isLive }) => {
   const handleJoinLive = async () => {
     setActErr(null);
     try {
-      const { data } = await axios.post(`/api/sessions/${session._id}/join`, {}, authCfg);
+      const { data } = await axios.post(`${API_BASE_URL}/api/sessions/${session._id}/join`, {}, authCfg);
       if (data?.token) setLiveConn({ token: data.token, url: data.url });
       setLive(true);
     } catch (e) {
@@ -485,7 +486,7 @@ const SessionCard = ({ session, isLive }) => {
   // ── End (host only): stop egress → webhook fills recordingUrl ──
   const handleEnd = async () => {
     try {
-      await axios.post(`/api/sessions/${session._id}/end`, {}, authCfg);
+      await axios.post(`${API_BASE_URL}/api/sessions/${session._id}/end`, {}, authCfg);
     } catch (e) {
       setActErr(e?.response?.data?.message || e.message || 'Could not end the session.');
     } finally {
