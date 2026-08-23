@@ -495,72 +495,35 @@ function ChatPanel({ myName, open, enabled, isTrainer, sessionId, onClose }) {
   };
 
   return (
-    <aside className={`lk-chat ${open ? 'open' : 'closed'}`} style={{ width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid #374151', background: '#111827', color: '#f3f4f6' }}>
-      <div style={{ padding: '8px 12px', borderBottom: '1px solid #374151', fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#f3f4f6' }}>
+    <aside className={`lk-chat ${open ? 'open' : 'closed'}`} style={{ width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid #e5e7eb', background: '#fff' }}>
+      <div className="px-3 py-2 border-b border-gray-200 font-semibold text-gray-700 text-sm flex items-center justify-between">
         <span>Chat</span>
-        <button onClick={onClose} className="lk-chat-toggle" style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: 18, lineHeight: 1, cursor: 'pointer' }}>&times;</button>
+        <button onClick={onClose} className="lk-chat-toggle text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
       </div>
       {!enabled ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: '#9ca3af' }}>Chat has been disabled</div>
+        <div className="flex-1 flex items-center justify-center text-sm text-gray-400">Chat has been disabled</div>
       ) : (
         <>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
+          <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
             {chatMessages.length === 0 ? (
-              <p style={{ fontSize: 12, color: '#9ca3af' }}>No messages yet.</p>
+              <p className="text-xs text-gray-400">No messages yet.</p>
             ) : (
               chatMessages.map((m) => {
                 const fromName = m.from?.name || m.from?.identity || 'Participant';
                 const mine = (m.from?.name || '') === myName;
                 return (
-                  <div key={m.timestamp + (m.from?.identity || '')} style={{ marginBottom: 8, textAlign: mine ? 'right' : 'left' }}>
-                    <span style={{ display: 'block', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#9ca3af', marginBottom: 2 }}>{mine ? 'You' : fromName}</span>
-                    <span style={{
-                      display: 'inline-block',
-                      padding: '6px 12px',
-                      borderRadius: 16,
-                      fontSize: 13,
-                      background: mine ? '#2563eb' : '#1f2937',
-                      color: mine ? '#fff' : '#f3f4f6',
-                    }}>{m.message}</span>
+                  <div key={m.timestamp + (m.from?.identity || '')} className={`text-sm ${mine ? 'text-right' : 'text-left'}`}>
+                    <span className="block text-[10px] uppercase tracking-wide text-gray-400">{mine ? 'You' : fromName}</span>
+                    <span className={`inline-block px-3 py-1.5 rounded-2xl ${mine ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>{m.message}</span>
                   </div>
                 );
               })
             )}
             <div ref={endRef} />
           </div>
-          <form onSubmit={onSend} style={{ padding: 8, borderTop: '1px solid #374151', display: 'flex', gap: 8 }}>
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="Type a message..."
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                fontSize: 13,
-                borderRadius: 8,
-                border: '1px solid #374151',
-                background: '#1f2937',
-                color: '#f9fafb',
-                outline: 'none',
-              }}
-            />
-            <button
-              type="submit"
-              disabled={isSending || !draft.trim()}
-              style={{
-                padding: '8px 12px',
-                borderRadius: 8,
-                fontSize: 13,
-                fontWeight: 600,
-                color: '#fff',
-                background: '#2563eb',
-                border: 'none',
-                cursor: isSending || !draft.trim() ? 'not-allowed' : 'pointer',
-                opacity: isSending || !draft.trim() ? 0.6 : 1,
-              }}
-            >
-              Send
-            </button>
+          <form onSubmit={onSend} className="p-2 border-t border-gray-200 flex gap-2">
+            <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Type a message..." className="flex-1 px-3 py-2 text-sm rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <button type="submit" disabled={isSending || !draft.trim()} className="px-3 py-2 rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60">Send</button>
           </form>
         </>
       )}
@@ -727,7 +690,7 @@ const styles = {
     .lk-chat-toggle{display:none}
     @media(max-width:767px){
       .lk-chat-toggle{display:inline-block}
-      .lk-chat{position:fixed;left:0;right:0;bottom:0;width:100%;height:60dvh;border-left:none;border-top:1px solid #374151;border-top-left-radius:16px;border-top-right-radius:16px;box-shadow:0 -8px 30px rgba(0,0,0,.35);transform:translateY(100%);transition:transform .22s ease;z-index:50;background:#111827}
+      .lk-chat{position:fixed;left:0;right:0;bottom:0;width:100%;height:60dvh;border-left:none;border-top:1px solid #e5e7eb;border-top-left-radius:16px;border-top-right-radius:16px;box-shadow:0 -8px 30px rgba(0,0,0,.35);transform:translateY(100%);transition:transform .22s ease;z-index:50}
       .lk-chat.open{transform:translateY(0)}
       .lk-chat.closed{transform:translateY(100%)}
     }
@@ -743,7 +706,7 @@ const styles = {
     .meet-thumb .lk-participant-tile{width:100%;height:100%;border-radius:8px;overflow:hidden}
     .meet-thumb .lk-participant-tile video,.meet-thumb .lk-participant-tile .lk-participant-media-video{width:100%;height:100%;object-fit:cover}
     @media(max-width:767px){.meet-thumb{width:120px;height:68px}}
-    .lk-chat{width:340px;flex-shrink:0;display:flex;flex-direction:column;border-left:1px solid #374151;background:#111827;color:#f3f4f6}
+    .lk-chat{width:340px;flex-shrink:0;display:flex;flex-direction:column;border-left:1px solid #e5e7eb;background:#fff}
   `,
 };
 
