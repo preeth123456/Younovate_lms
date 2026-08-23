@@ -1,6 +1,13 @@
-# Younovate LMS — Render deployment blueprint
-# Backend API (Express + MongoDB): use rootDir backend
-# If you deploy the optional Next.js payment shell at repo root, use rootDir . with build yarn build
+# Younovate LMS — Render blueprint
+#
+# IMPORTANT: The LMS API is the Express app in backend/.
+# Frontend is on Vercel — do NOT build the Next.js app at repo root for the API service.
+#
+# Manual Render dashboard settings (if not using this blueprint):
+#   Root Directory:  backend
+#   Build Command:   npm install
+#   Start Command:   npm start
+#   NODE_ENV:        production
 
 services:
   - type: web

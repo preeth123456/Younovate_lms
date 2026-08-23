@@ -4,7 +4,7 @@
 // payment processing.
 // ============================================
 
-import { getRazorpay, RAZORPAY_DISABLED_MESSAGE } from '@/lib/razorpay';
+import { getRazorpay, RAZORPAY_DISABLED_MESSAGE } from '../../../../lib/razorpay';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
