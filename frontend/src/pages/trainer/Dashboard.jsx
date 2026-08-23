@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import axios from 'axios';
-import { API_BASE_URL } from '../../config/api';
+import { API_BASE_URL, LIVEKIT_WS_URL } from '../../config/api';
 
 // ── LiveKit (third-party real-time video) ─────────────────────────────────────
 import { LiveKitRoom, VideoConference } from '@livekit/components-react';
@@ -38,7 +38,7 @@ import {
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const LIVEKIT_URL = process.env.REACT_APP_LIVEKIT_URL || '';
+const LIVEKIT_URL = LIVEKIT_WS_URL;
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -147,6 +147,32 @@ const CSS = `
   .lk-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; background: #111827; color: #fff; flex-shrink: 0; }
   .lk-stage { flex: 1; min-height: 0; }
   .lk-leave { background: #dc2626; color: #fff; border: none; padding: 8px 16px; border-radius: 8px; font-size: 0.82rem; font-weight: 700; cursor: pointer; }
+
+  /* LiveKit VideoConference — dark meeting + chat */
+  .lk-overlay [data-lk-theme] {
+    --lk-bg: #0b0d12;
+    --lk-bg2: #111827;
+    --lk-bg3: #1f2937;
+    --lk-fg: #f3f4f6;
+    --lk-fg-secondary: #9ca3af;
+    --lk-border-color: #374151;
+    --lk-control-bg: #1f2937;
+    --lk-control-fg: #f9fafb;
+    --lk-control-hover-bg: #374151;
+    --lk-accent-bg: #2563eb;
+    --lk-accent-fg: #fff;
+  }
+  .lk-overlay .lk-chat-entry input,
+  .lk-overlay .lk-chat-form-input,
+  .lk-overlay .lk-chat-form textarea {
+    background: #1f2937 !important;
+    color: #f9fafb !important;
+    border-color: #374151 !important;
+  }
+  .lk-overlay .lk-chat-entry input::placeholder,
+  .lk-overlay .lk-chat-form-input::placeholder {
+    color: #9ca3af !important;
+  }
 
   @media (max-width: 1024px) { .td-g3 { grid-template-columns: 1fr 1fr !important; } }
   @media (max-width:  680px) { .td-g3 { grid-template-columns: 1fr       !important; } }
@@ -334,7 +360,7 @@ const LiveRoom = ({ session, isHost = false, onClose, onEndSession, initialToken
             <span style={{ fontSize: '0.72rem', color: '#1e40af', fontWeight: 700 }}>Processing…</span>
           )}
           {isHost && recordingError && (
-            <span style={{ fontSize: '0.7rem', color: '#dc2626' }} title={recordingError}>⚠️</span>
+            <span style={{ fontSize: '0.7rem', color: '#fca5a5', maxWidth: 180, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={recordingError}>{recordingError}</span>
           )}
           {isHost && (
             <button
@@ -384,7 +410,7 @@ const LiveRoom = ({ session, isHost = false, onClose, onEndSession, initialToken
             video={true}
             audio={true}
             onDisconnected={onClose}
-            data-lk-theme="default"
+            data-lk-theme="huddle"
             style={{ height: '100%' }}
           >
             <VideoConference />

@@ -116,6 +116,10 @@ async function stopRecording(egressId) {
   } catch (err) { throw err; }
 }
 
+function isLiveKitConfigured() {
+  return Boolean(apiKey && apiSecret && LIVEKIT_URL && host);
+}
+
 module.exports = {
   LIVEKIT_URL,
   roomService,
@@ -125,4 +129,5 @@ module.exports = {
   generateLiveKitToken,
   startRecording,
   stopRecording,
+  isLiveKitConfigured,
 };

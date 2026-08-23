@@ -401,10 +401,24 @@ router.get('/attendance/session/:sessionId', async (req, res) => {
 // POST /api/trainer/sessions/:id/recording/start
 const startRecordingSession = async (req, res) => {
   try {
+    const { isLiveKitConfigured } = require('../services/livekitService');
+    if (!isLiveKitConfigured()) {
+      return res.status(503).json({
+        success: false,
+        message: 'LiveKit is not configured on the server. Set LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET on Render.',
+      });
+    }
+
     const session = await Session.findOne({ _id: req.params.id, trainerId: req.user._id, ...LMS_FILTER });
     if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
     if (String(session.trainerId) !== String(req.user._id)) {
       return res.status(403).json({ success: false, message: 'Not your session' });
+    }
+    if (session.status !== 'live') {
+      return res.status(400).json({
+        success: false,
+        message: 'Go live first, then start recording.',
+      });
     }
     if (session.recordingStatus === 'recording') {
       return res.status(409).json({ success: false, message: 'Recording is already in progress' });
@@ -449,7 +463,13 @@ const startRecordingSession = async (req, res) => {
       }
     } catch (err) {
       console.warn('Recording start failed:', err.message);
-      return res.status(500).json({ success: false, message: 'Failed to start recording: ' + err.message });
+      const hint = err.message?.includes('egress') || err.message?.includes('Egress')
+        ? ' Enable egress on your LiveKit project (LiveKit Cloud or a running egress service).'
+        : '';
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to start recording: ' + err.message + hint,
+      });
     }
     return res.status(500).json({ success: false, message: 'No egress ID returned' });
   } catch (err) {

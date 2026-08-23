@@ -5,3 +5,5 @@ export const API_BASE_URL = (
   process.env.REACT_APP_API_BASE_URL ||
   (process.env.NODE_ENV === 'production' ? PRODUCTION_API_BASE : DEFAULT_DEV_API_BASE)
 ).replace(/\/+$/, '');
+
+export const LIVEKIT_WS_URL = (process.env.REACT_APP_LIVEKIT_URL || '').replace(/\/+$/, '');
