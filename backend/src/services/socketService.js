@@ -2,13 +2,14 @@
 'use strict';
 const { Server } = require('socket.io');
 const jwt        = require('jsonwebtoken');
+const { ALLOWED_ORIGINS } = require('../config/corsOrigins');
 
 let io;
 
 const initSocket = (server) => {
   io = new Server(server, {
     cors: {
-      origin:      process.env.FRONTEND_URL || 'http://localhost:3000',
+      origin:      ALLOWED_ORIGINS,
       credentials: true,
     },
   });

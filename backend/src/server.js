@@ -16,6 +16,7 @@ const morgan       = require('morgan');
 const { globalLimiter } = require('./middleware/rateLimiters');
 
 const connectDB      = require('./config/database');
+const { corsOriginChecker } = require('./config/corsOrigins');
 const { initSocket } = require('./services/socketService');
 const errorHandler   = require('./middleware/errorHandler');
 
@@ -54,7 +55,7 @@ initSocket(server);
 
 // ── Security middleware ───────────────────────────────────────────────────────
 app.use(helmet());
-app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
+app.use(cors({ origin: corsOriginChecker, credentials: true }));
 
 // ════════════════════════════════════════════════════════════════════════════
 // LIVEKIT WEBHOOK — raw body only on /webhook (token route needs express.json below)
