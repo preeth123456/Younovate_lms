@@ -169,12 +169,46 @@ router.post('/register', async (req, res) => {
     if (workshop.maxSeats > 0 && activeRegCount >= workshop.maxSeats)
       return res.status(400).json({ success: false, message: 'Workshop Full. No seats available.' });
 
+    const existingUser = await User.findOne({ email: normalEmail }).lean();
+
     // ── Duplicate check (case-insensitive via normalised email) ───────────────
     const existing = await WorkshopPublicRegistration.findOne({ workshopId, email: normalEmail });
-    if (existing)
-      return res.status(409).json({ success: false, message: 'Already registered for this workshop.' });
+    if (existing) {
+      if (existing.registrationStatus === 'Rejected' || existing.registrationStatus === 'Cancelled') {
+        existing.fullName       = cleanName;
+        existing.phone          = cleanPhone;
+        existing.whatsapp       = cleanWhatsApp;
+        existing.college        = cleanCollege;
+        existing.qualification  = cleanQual;
+        existing.city           = cleanCity;
+        existing.state          = cleanState;
+        existing.experience     = cleanExp;
+        existing.linkedin       = (linkedin || '').trim();
+        existing.github         = (github   || '').trim();
+        existing.workshopName   = workshop.title;
+        existing.userId         = existingUser?._id || existing.userId || null;
+        existing.registrationStatus = 'Registered';
+        existing.registrationDate   = new Date();
+        await existing.save();
 
-    const existingUser = await User.findOne({ email: normalEmail }).lean();
+        const newCount = activeRegCount + 1;
+        await Workshop.findByIdAndUpdate(workshopId, {
+          registrationCount: newCount,
+          availableSeats: Math.max(0, workshop.maxSeats - newCount),
+        });
+
+        return res.status(201).json({ success: true, message: 'Registration successful', data: existing });
+      }
+
+      if (existing.registrationStatus === 'Registered' || existing.registrationStatus === 'Approved') {
+        return res.status(200).json({
+          success: true,
+          message: 'You are already registered for this workshop.',
+          data: existing,
+          alreadyRegistered: true,
+        });
+      }
+    }
 
     // ── Link to existing User account if one matches this email ────────────────
     const userId = existingUser?._id || null;
@@ -208,8 +242,21 @@ router.post('/register', async (req, res) => {
 
     return res.status(201).json({ success: true, message: 'Registration successful', data: registration });
   } catch (err) {
-    if (err.code === 11000)
+    if (err.code === 11000) {
+      const dup = await WorkshopPublicRegistration.findOne({
+        workshopId: req.body?.workshopId,
+        email: String(req.body?.email || '').trim().toLowerCase(),
+      }).lean();
+      if (dup) {
+        return res.status(200).json({
+          success: true,
+          message: 'You are already registered for this workshop.',
+          data: dup,
+          alreadyRegistered: true,
+        });
+      }
       return res.status(409).json({ success: false, message: 'Already registered for this workshop.' });
+    }
     return res.status(500).json({ success: false, message: err.message });
   }
 });
