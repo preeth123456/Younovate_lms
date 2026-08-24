@@ -142,6 +142,23 @@ async function stopRecording(egressId) {
   } catch (err) { throw err; }
 }
 
+async function getEgressInfo(egressId) {
+  if (!egressId) return null;
+  try {
+    let infos = await egressClient.listEgress({ egressId });
+    if (!Array.isArray(infos)) infos = infos?.items || [];
+    if (infos.length) return infos[0];
+  } catch (_) {
+    try {
+      const infos = await egressClient.listEgress(undefined, undefined, egressId);
+      if (Array.isArray(infos) && infos.length) return infos[0];
+    } catch (err) {
+      console.warn('getEgressInfo failed:', err.message);
+    }
+  }
+  return null;
+}
+
 module.exports = {
   LIVEKIT_URL,
   roomService,
@@ -151,4 +168,5 @@ module.exports = {
   generateLiveKitToken,
   startRecording,
   stopRecording,
+  getEgressInfo,
 };

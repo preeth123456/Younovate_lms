@@ -29,6 +29,144 @@ function buildRecordingUrl(relPath) {
   return `${BASE_RECORDING_URL}/recordings/${relPath}`;
 }
 
+// ── S3 / cloud storage (LiveKit Cloud egress) ─────────────────────────────
+function getS3Config() {
+  const bucket = process.env.S3_BUCKET || process.env.AWS_S3_BUCKET;
+  const region = process.env.S3_REGION || process.env.AWS_REGION;
+  const endpoint = process.env.S3_ENDPOINT || '';
+  const publicBase = (process.env.S3_PUBLIC_URL_BASE || process.env.AWS_S3_PUBLIC_URL_BASE || '').replace(/\/+$/, '');
+  if (!bucket || !region) return null;
+  return { bucket, region, endpoint, publicBase };
+}
+
+function isS3Configured() {
+  const s3 = getS3Config();
+  const accessKey = process.env.S3_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID;
+  const secretKey = process.env.S3_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+  return !!(s3 && accessKey && secretKey);
+}
+
+function defaultRecordingStorage() {
+  return isS3Configured() ? 's3' : 'local';
+}
+
+function isHttpUrl(value) {
+  return /^https?:\/\//i.test(String(value || ''));
+}
+
+function isLocalRecordingUrl(url) {
+  if (!url) return false;
+  return url.startsWith(`${BASE_RECORDING_URL}/recordings/`);
+}
+
+function normalizeS3Key(raw) {
+  if (!raw) return '';
+  return String(raw)
+    .replace(/^s3:\/\/[^/]+\//, '')
+    .replace(/^\/+/, '');
+}
+
+/** Public HTTPS URL for an object key (bucket policy must allow read on recordings/*). */
+function buildS3PublicUrl(key) {
+  const s3 = getS3Config();
+  if (!s3 || !key) return '';
+  const normalizedKey = normalizeS3Key(key);
+  if (s3.publicBase) {
+    return `${s3.publicBase}/${normalizedKey}`;
+  }
+  if (s3.endpoint) {
+    const base = s3.endpoint.replace(/\/+$/, '');
+    return `${base}/${s3.bucket}/${normalizedKey}`;
+  }
+  return `https://${s3.bucket}.s3.${s3.region}.amazonaws.com/${normalizedKey}`;
+}
+
+function recordingStorageKind(recording) {
+  if (!recording) return 'local';
+  if (recording.storage === 's3') return 's3';
+  if (recording.url && isHttpUrl(recording.url) && !isLocalRecordingUrl(recording.url)) return 's3';
+  if (recording.filename && isS3Configured() && !recording.filename.startsWith('/out/')) {
+    const fn = recording.filename;
+    if (!fn.includes('\\') && fn.includes('/') && !fileExistsForRelPath(normalizeRelPath(fn))) {
+      return 's3';
+    }
+  }
+  return 'local';
+}
+
+/** Map LiveKit egress file metadata to playback URL + storage kind. */
+function resolveEgressFileUrl(file = {}) {
+  const rawLocation = file.location || '';
+  const rawFilename = file.filename || '';
+
+  if (isHttpUrl(rawLocation)) {
+    return {
+      url: rawLocation,
+      filename: normalizeS3Key(rawFilename || rawLocation),
+      storage: 's3',
+    };
+  }
+  if (isHttpUrl(rawFilename)) {
+    return {
+      url: rawFilename,
+      filename: normalizeS3Key(rawFilename),
+      storage: 's3',
+    };
+  }
+
+  const key = normalizeS3Key(rawFilename || rawLocation);
+  if (key && isS3Configured()) {
+    return {
+      url: buildS3PublicUrl(key),
+      filename: key,
+      storage: 's3',
+    };
+  }
+
+  const relPath = normalizeRelPath(rawFilename || rawLocation);
+  return {
+    url: relPath ? buildRecordingUrl(relPath) : '',
+    filename: relPath,
+    storage: 'local',
+  };
+}
+
+function isTerminalEgressStatus(status) {
+  const s = String(status || '');
+  return s === 'EGRESS_COMPLETE' || s === 'EGRESS_FAILED' || s === 'EGRESS_ABORTED' || s === '3' || s === '4' || s === '5';
+}
+
+async function tryReconcileFromLiveKitApi(egressId, recording) {
+  if (!isS3Configured() || !egressId) return null;
+  try {
+    const { getEgressInfo } = require('../services/livekitService');
+    const eg = await getEgressInfo(egressId);
+    if (!eg) return null;
+
+    const file = eg.fileResults?.[0] || eg.file?.fileResults?.[0] || {};
+    const resolved = resolveEgressFileUrl(file);
+    if (resolved.storage !== 's3' || !resolved.url) return null;
+
+    const durationSeconds = file.duration ? Math.round(Number(file.duration) / 1e9) : 0;
+    const sizeBytes = file.size ? Number(file.size) : 0;
+    const isComplete = isTerminalEgressStatus(eg.status) || resolved.url;
+
+    if (!isComplete) return null;
+
+    return finalizeRecordingRemote(recording, {
+      url: resolved.url,
+      filename: resolved.filename,
+      storage: 's3',
+      sizeBytes,
+      durationSeconds,
+      endedAt: recording.endedAt || new Date(),
+    });
+  } catch (err) {
+    console.warn('LiveKit egress reconcile:', err.message);
+    return null;
+  }
+}
+
 function findLatestMp4InRoom(roomName) {
   if (!roomName) return null;
   const roomDir = path.join(RECORDINGS_DIR, roomName);
@@ -243,11 +381,67 @@ function readEgressMediaDuration(egressId, roomName) {
 }
 
 function resolveRecordingPlayback(recording) {
+  const kind = recordingStorageKind(recording);
+
+  if (kind === 's3') {
+    const url = recording.url || buildS3PublicUrl(recording.filename);
+    const isComplete = recording.status === 'completed'
+      || recording.status === 'available'
+      || (recording.endedAt && url);
+    return {
+      url,
+      playable: isComplete && !!url,
+      relPath: recording.filename || '',
+    };
+  }
+
   const relPath = resolveRelPath(recording);
   if (relPath) ensureFileOnHost(relPath);
   const url = relPath ? buildRecordingUrl(relPath) : (recording.url || '');
   const playable = relPath ? isMp4WebPlayable(relPath) : false;
   return { url, playable, relPath };
+}
+
+/**
+ * Finalize a cloud-stored recording (S3) — no local disk required.
+ */
+async function finalizeRecordingRemote(recording, { url, filename, storage, sizeBytes, durationSeconds, endedAt } = {}) {
+  const Recording = require('../models/Recording');
+  const Session   = require('../models/Session');
+
+  const finalUrl = url || buildS3PublicUrl(filename);
+  if (!finalUrl) return null;
+
+  const ended = endedAt || recording.endedAt || new Date();
+  let duration = durationSeconds || recording.durationSeconds || 0;
+  if (!duration && recording.startedAt) {
+    duration = Math.max(1, Math.round((ended.getTime() - new Date(recording.startedAt).getTime()) / 1000));
+  }
+
+  const updated = await Recording.findOneAndUpdate(
+    { egressId: recording.egressId },
+    {
+      $set: {
+        status: 'completed',
+        url: finalUrl,
+        filename: filename || recording.filename || '',
+        storage: storage || 's3',
+        sizeBytes: sizeBytes || recording.sizeBytes || 0,
+        endedAt: ended,
+        durationSeconds: duration,
+        error: '',
+      },
+    },
+    { new: true }
+  ).lean();
+
+  if (updated?.sessionId) {
+    await Session.findByIdAndUpdate(updated.sessionId, {
+      $set: { recordingStatus: 'available', recordingUrl: finalUrl, egressId: '' },
+    });
+  }
+
+  return updated;
 }
 
 /**
@@ -309,6 +503,22 @@ async function reconcileRecordingByEgressId(egressId, { maxAttempts = 1, delayMs
     const recording = await Recording.findOne({ egressId }).lean();
     if (!recording) return null;
 
+    if (recordingStorageKind(recording) === 's3') {
+      if (recording.status === 'completed' && recording.url) {
+        return recording;
+      }
+      if (recording.url) {
+        const finalized = await finalizeRecordingRemote(recording, {
+          url: recording.url,
+          filename: recording.filename,
+          storage: 's3',
+        });
+        if (finalized) return finalized;
+      }
+      const fromApi = await tryReconcileFromLiveKitApi(egressId, recording);
+      if (fromApi) return fromApi;
+    }
+
     if (recording.status === 'completed') {
       const egressPath = resolveRelPathFromEgressMeta(egressId, recording.roomName);
       if (egressPath && ensureFileOnHost(egressPath)) {
@@ -342,13 +552,24 @@ async function reconcileRecordingByEgressId(egressId, { maxAttempts = 1, delayMs
       const size = fs.statSync(path.join(RECORDINGS_DIR, hintedRelPath)).size;
       return finalizeRecordingOnDisk(recording, hintedRelPath, size);
     }
+
+    if (isS3Configured()) {
+      const fromApi = await tryReconcileFromLiveKitApi(egressId, recording);
+      if (fromApi) return fromApi;
+    }
   }
 
   const recording = await Recording.findOne({ egressId }).lean();
   if (!recording) return null;
 
   if (markFailed && ['processing', 'active'].includes(recording.status)) {
-    const error = 'Recording file was not found after processing. Please try recording again.';
+    if (isS3Configured()) {
+      const fromApi = await tryReconcileFromLiveKitApi(egressId, recording);
+      if (fromApi) return fromApi;
+    }
+    const error = isS3Configured()
+      ? 'Recording file was not found in S3 after processing. Check bucket policy and LiveKit webhook.'
+      : 'Recording file was not found after processing. Please try recording again.';
     const failed = await Recording.findOneAndUpdate(
       { egressId },
       { $set: { status: 'failed', error } },
@@ -370,6 +591,12 @@ module.exports = {
   BASE_RECORDING_URL,
   normalizeRelPath,
   buildRecordingUrl,
+  getS3Config,
+  isS3Configured,
+  defaultRecordingStorage,
+  buildS3PublicUrl,
+  resolveEgressFileUrl,
+  recordingStorageKind,
   findLatestMp4InRoom,
   resolveRelPath,
   resolveRelPathFromEgressMeta,
@@ -380,6 +607,7 @@ module.exports = {
   isMp4WebPlayable,
   readEgressMediaDuration,
   resolveRecordingPlayback,
+  finalizeRecordingRemote,
   finalizeRecordingOnDisk,
   reconcileRecordingByEgressId,
 };

@@ -14,7 +14,7 @@ const LmsFeedback = require('../models/LmsFeedback');
 const { protect, authorize } = require('../middleware/auth');
 const sessionCtrl = require('../controllers/sessionController');
 
-const { resolveRecordingPlayback, reconcileRecordingByEgressId } = require('../utils/recordingStorage');
+const { resolveRecordingPlayback, reconcileRecordingByEgressId, defaultRecordingStorage } = require('../utils/recordingStorage');
 const { rejectPastDateTime } = require('../utils/dateTimeValidation');
 
 const router = express.Router();
@@ -430,6 +430,7 @@ const startRecordingSession = async (req, res) => {
             egressId,
             roomName,
             status: 'active',
+            storage: defaultRecordingStorage(),
             startedAt: new Date(),
           });
           session.recordings.push(recording._id);

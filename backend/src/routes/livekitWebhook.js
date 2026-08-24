@@ -9,10 +9,12 @@ const Recording = require('../models/Recording');
 const {
   RECORDINGS_DIR,
   normalizeRelPath,
-  buildRecordingUrl,
+  resolveEgressFileUrl,
   reconcileRecordingByEgressId,
   fileExistsForRelPath,
   ensureMp4WebPlayable,
+  finalizeRecordingRemote,
+  defaultRecordingStorage,
 } = require('../utils/recordingStorage');
 
 const router = express.Router();
@@ -41,6 +43,7 @@ async function ensureRecording(egressId, roomName) {
     egressId,
     roomName:  roomName || session.roomName,
     status:    'processing',
+    storage:   defaultRecordingStorage(),
     startedAt: session.startedAt || new Date(),
   });
 
@@ -51,15 +54,16 @@ async function ensureRecording(egressId, roomName) {
   return recording;
 }
 
-function buildUpdateFromEvent(eg, url, relPath) {
+function buildUpdateFromEvent(eg, resolved) {
   const file = eg.fileResults?.[0] || {};
   const durationSeconds = file.duration ? Math.round(Number(file.duration) / 1e9) : 0;
   const sizeBytes       = file.size ? Number(file.size) : 0;
 
   return {
     update: {
-      url: url || '',
-      filename: relPath || normalizeRelPath(file.filename || ''),
+      url: resolved.url || '',
+      filename: resolved.filename || normalizeRelPath(file.filename || ''),
+      storage: resolved.storage || defaultRecordingStorage(),
       durationSeconds,
       sizeBytes,
     },
@@ -83,20 +87,22 @@ router.post('/', async (req, res) => {
     }
 
     const file = eg.fileResults?.[0] || {};
-    const rawPath  = file.filename || '';
-    const relPath  = normalizeRelPath(rawPath);
-    const url      = buildRecordingUrl(relPath);
-
+    const resolved = resolveEgressFileUrl(file);
     const isTerminal = event.event === 'egress_ended' || TERMINAL_EGRESS_STATUSES.has(eg.status);
 
     if (isTerminal) {
+      const relPath = resolved.storage === 'local' ? resolved.filename : '';
       const filePath = relPath ? path.join(RECORDINGS_DIR, relPath) : '';
       const fileExists = relPath ? fileExistsForRelPath(relPath) : false;
+      const s3Ready = resolved.storage === 's3' && resolved.url;
 
-      const { update, durationSeconds, sizeBytes } = buildUpdateFromEvent(eg, url, relPath);
+      const { update, durationSeconds, sizeBytes } = buildUpdateFromEvent(eg, resolved);
       update.endedAt = new Date();
 
-      if (fileExists) {
+      if (s3Ready) {
+        update.status = 'completed';
+        update.error  = '';
+      } else if (fileExists) {
         ensureMp4WebPlayable(filePath);
         update.status = 'completed';
         update.error  = '';
@@ -120,27 +126,37 @@ router.post('/', async (req, res) => {
         );
       }
 
-      // Disk reconciliation — only mark available when MP4 actually exists
-      const reconciled = await reconcileRecordingByEgressId(eg.egressId, { maxAttempts: 3, delayMs: 1000 });
-      const finalRec   = reconciled || recording;
+      let finalRec = recording;
+      if (s3Ready && recording) {
+        finalRec = await finalizeRecordingRemote(recording, {
+          url: resolved.url,
+          filename: resolved.filename,
+          storage: 's3',
+          sizeBytes,
+          durationSeconds,
+          endedAt: update.endedAt,
+        }) || recording;
+      } else {
+        const reconciled = await reconcileRecordingByEgressId(eg.egressId, { maxAttempts: 3, delayMs: 1000 });
+        finalRec = reconciled || recording;
+      }
 
-      if (finalRec && (finalRec.status === 'completed' || fileExists)) {
-        const playUrl = finalRec.url || url;
+      if (finalRec && (finalRec.status === 'completed' || fileExists || s3Ready)) {
+        const playUrl = finalRec.url || resolved.url;
         await Session.findOneAndUpdate(
           { $or: [{ egressId: eg.egressId }, { roomName: eg.roomName }] },
           { recordingUrl: playUrl, recordingStatus: 'available', egressId: '' }
         );
         console.log('Recording saved →', playUrl, `(${durationSeconds}s, ${sizeBytes} bytes)`, finalRec._id);
 
-        const finalPath = path.join(RECORDINGS_DIR, normalizeRelPath(finalRec.filename || relPath));
-        if (fs.existsSync(finalPath)) {
-          setImmediate(() => tryFastStartMp4(finalPath));
+        if (filePath && fs.existsSync(filePath)) {
+          setImmediate(() => tryFastStartMp4(filePath));
         }
       } else {
-        console.error('Recording file missing after egress ended →', filePath || relPath, 'egressId:', eg.egressId);
+        console.error('Recording file missing after egress ended →', filePath || resolved.filename, 'egressId:', eg.egressId);
       }
     } else {
-      const { update } = buildUpdateFromEvent(eg, url, relPath);
+      const { update } = buildUpdateFromEvent(eg, resolved);
       await Recording.findOneAndUpdate(
         { egressId: eg.egressId },
         { $set: update },

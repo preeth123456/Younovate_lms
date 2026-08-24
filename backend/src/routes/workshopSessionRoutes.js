@@ -12,7 +12,7 @@ const { WorkshopPublicRegistration, WorkshopAttendance, WorkshopCertificate } = 
 const { protect, authorize } = require('../middleware/auth');
 const { generateLiveKitToken, roomNameFor, LIVEKIT_URL, startRecording, stopRecording, roomService } = require('../services/livekitService');
 const { classifyAttendance, finalizeAttendanceOnEnd, finalizeWorkshopAttendanceOnEnd } = require('../utils/attendanceUtils');
-const { reconcileRecordingByEgressId } = require('../utils/recordingStorage');
+const { reconcileRecordingByEgressId, defaultRecordingStorage } = require('../utils/recordingStorage');
 const { rejectPastDateTime } = require('../utils/dateTimeValidation');
 const { isWorkshopParticipant, syncWorkshopStudent } = require('../utils/participantValidation');
 const { emitToRole, emitToSession } = require('../services/socketService');
@@ -711,17 +711,18 @@ router.post('/:id/recording/start', protect, authorize('trainer'), async (req, r
         error: err.message,
         code: err.code,
       });
-      return res.status(500).json({ success: false, message: 'Failed to start recording: ' + err.message });
+      const status = err.message?.includes('S3') || err.message?.includes('not configured') ? 503 : 500;
+      return res.status(status).json({ success: false, message: 'Failed to start recording: ' + err.message });
     }
 
     // Save Recording document in MongoDB
-    const Recording = require('../models/Recording');
     const recording = await Recording.create({
       sessionId: session._id,
       trainerId: req.user._id,
       egressId,
       roomName,
       status: 'active',
+      storage: defaultRecordingStorage(),
       startedAt: new Date(),
     });
 
