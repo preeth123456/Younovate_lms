@@ -5,6 +5,9 @@ import { API_BASE_URL } from '../config/api';
 
 const API = API_BASE_URL;
 
+// Required so httpOnly refreshToken cookie is sent/stored on Vercel → Render
+axios.defaults.withCredentials = true;
+
 let isRefreshing = false;
 let failedQueue = [];
 

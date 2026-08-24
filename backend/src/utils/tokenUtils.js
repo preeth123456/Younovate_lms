@@ -19,18 +19,32 @@ const generateRefreshToken = (user) =>
     { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
   );
 
-const setRefreshCookie = (res, token) => {
-  res.cookie('refreshToken', token, {
+/** Cookie options for Vercel frontend → Render API (cross-site). */
+function refreshCookieOptions() {
+  const isProduction = process.env.NODE_ENV === 'production';
+  return {
     httpOnly: true,
-    secure:   process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge:   7 * 24 * 60 * 60 * 1000, // 7 days
-  });
+    secure:   isProduction,
+  // strict blocks cookies on cross-origin requests (Vercel ≠ Render)
+    sameSite: isProduction ? 'none' : 'lax',
+    path:     '/',
+    maxAge:   7 * 24 * 60 * 60 * 1000,
+  };
+}
+
+const setRefreshCookie = (res, token) => {
+  res.cookie('refreshToken', token, refreshCookieOptions());
 };
 
 const clearAuthCookies = (res) => {
-  res.clearCookie('refreshToken');
-  res.clearCookie('accessToken');
+  const opts = refreshCookieOptions();
+  res.clearCookie('refreshToken', {
+    httpOnly: opts.httpOnly,
+    secure:   opts.secure,
+    sameSite: opts.sameSite,
+    path:     opts.path,
+  });
+  res.clearCookie('accessToken', { path: '/' });
 };
 
 module.exports = {
@@ -39,4 +53,5 @@ module.exports = {
   generateRefreshToken,
   setRefreshCookie,
   clearAuthCookies,
+  refreshCookieOptions,
 };
