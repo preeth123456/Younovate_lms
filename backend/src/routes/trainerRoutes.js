@@ -449,7 +449,8 @@ const startRecordingSession = async (req, res) => {
       }
     } catch (err) {
       console.warn('Recording start failed:', err.message);
-      return res.status(500).json({ success: false, message: 'Failed to start recording: ' + err.message });
+      const status = err.message?.includes('S3') || err.message?.includes('not configured') ? 503 : 500;
+      return res.status(status).json({ success: false, message: 'Failed to start recording: ' + err.message });
     }
     return res.status(500).json({ success: false, message: 'No egress ID returned' });
   } catch (err) {

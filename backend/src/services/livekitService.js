@@ -70,23 +70,44 @@ async function generateLiveKitToken(
 }
 
 // ── Recording (best-effort; never blocks "go live") ───────────────────
+function getS3UploadConfig() {
+  const bucket = process.env.S3_BUCKET || process.env.AWS_S3_BUCKET;
+  const accessKey = process.env.S3_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID;
+  const secretKey = process.env.S3_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+  const region = process.env.S3_REGION || process.env.AWS_REGION;
+  if (!bucket || !accessKey || !secretKey || !region) return null;
+  return { bucket, accessKey, secretKey, region };
+}
+
+function isLiveKitCloud() {
+  return LIVEKIT_URL.includes('livekit.cloud');
+}
+
 function buildFileOutput() {
-  if (process.env.S3_BUCKET) {
+  const s3 = getS3UploadConfig();
+  if (s3) {
     return new EncodedFileOutput({
       fileType: EncodedFileType.MP4,
-      filepath: '{room_name}/{time}.mp4',
+      filepath: 'recordings/{room_name}/{time}.mp4',
       output: {
         case: 's3',
         value: new S3Upload({
-          accessKey: process.env.S3_ACCESS_KEY,
-          secret:    process.env.S3_SECRET_KEY,
-          bucket:    process.env.S3_BUCKET,
-          region:    process.env.S3_REGION,
-          endpoint:  process.env.S3_ENDPOINT, // set for R2 / Backblaze / MinIO
+          accessKey: s3.accessKey,
+          secret:    s3.secretKey,
+          bucket:    s3.bucket,
+          region:    s3.region,
+          endpoint:  process.env.S3_ENDPOINT,
         }),
       },
     });
   }
+
+  if (isLiveKitCloud()) {
+    throw new Error(
+      'LiveKit Cloud recording needs S3. Set S3_BUCKET (or AWS_S3_BUCKET), S3_ACCESS_KEY, S3_SECRET_KEY, and S3_REGION on the server.'
+    );
+  }
+
   return new EncodedFileOutput({
     fileType: EncodedFileType.MP4,
     filepath: '/out/{room_name}/{time}.mp4', // self-hosted egress only
@@ -94,9 +115,14 @@ function buildFileOutput() {
 }
 
 async function startRecording(roomName) {
+  if (!apiKey || !apiSecret || !LIVEKIT_URL || !host) {
+    throw new Error('LiveKit is not configured (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET).');
+  }
+
   try {
+    const output = buildFileOutput();
     const info = await Promise.race([
-      egressClient.startRoomCompositeEgress(roomName, { file: buildFileOutput() }),
+      egressClient.startRoomCompositeEgress(roomName, output),
       new Promise((_, reject) => setTimeout(() => reject(new Error('LiveKit egress start timed out')), 15000)),
     ]);
     return info?.egressId || null;
