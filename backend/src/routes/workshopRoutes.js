@@ -71,6 +71,45 @@ function validateRegUrl(val, hostname) {
   }
 }
 
+function normalizeWorkshopRegEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function workshopRegEmailRegex(normalEmail) {
+  const escaped = normalEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${escaped}$`, 'i');
+}
+
+const ACTIVE_WORKSHOP_REG_STATUSES = ['Registered', 'Approved'];
+
+/** Find registration for one workshop + email (case-insensitive, legacy-safe). */
+async function findRegistrationForWorkshop(workshopOid, normalEmail) {
+  if (!workshopOid || !normalEmail) return null;
+  let doc = await WorkshopPublicRegistration.findOne({ workshopId: workshopOid, email: normalEmail });
+  if (doc) return doc;
+  return WorkshopPublicRegistration.findOne({
+    workshopId: workshopOid,
+    email: { $regex: workshopRegEmailRegex(normalEmail) },
+  });
+}
+
+function workshopRegistrationResponse(res, registration, { alreadyRegistered = false } = {}) {
+  if (alreadyRegistered) {
+    return res.status(200).json({
+      success: true,
+      message: 'You are already registered for this workshop.',
+      data: registration,
+      alreadyRegistered: true,
+    });
+  }
+  return res.status(201).json({
+    success: true,
+    message: 'Registration successful',
+    data: registration,
+    alreadyRegistered: false,
+  });
+}
+
 // POST /api/workshops/register — public registration (MUST be before /:id)
 router.post('/register', async (req, res) => {
   try {
@@ -93,7 +132,7 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please enter a valid full name.' });
 
     // ── Email ─────────────────────────────────────────────────────────────────
-    const normalEmail = (email || '').trim().toLowerCase();
+    const normalEmail = normalizeWorkshopRegEmail(email);
     if (!normalEmail) return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
     if (normalEmail.length > 254 || !REG_EMAIL_RE.test(normalEmail))
       return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
@@ -156,14 +195,15 @@ router.post('/register', async (req, res) => {
     if (githubErr) return res.status(400).json({ success: false, message: 'Please enter a valid GitHub profile URL.' });
 
     // ── Workshop existence + open check ──────────────────────────────────────
-    const workshop = await Workshop.findById(workshopId);
+    const workshopOid = new mongoose.Types.ObjectId(workshopId);
+    const workshop = await Workshop.findById(workshopOid);
     if (!workshop) return res.status(404).json({ success: false, message: 'Workshop not found.' });
     if (!workshop.registrationOpen)
       return res.status(400).json({ success: false, message: 'Registration is closed for this workshop.' });
 
     // ── Capacity check ────────────────────────────────────────────────────────
     const activeRegCount = await WorkshopPublicRegistration.countDocuments({
-      workshopId,
+      workshopId: workshopOid,
       registrationStatus: { $nin: ['Cancelled', 'Rejected'] },
     });
     if (workshop.maxSeats > 0 && activeRegCount >= workshop.maxSeats)
@@ -171,8 +211,8 @@ router.post('/register', async (req, res) => {
 
     const existingUser = await User.findOne({ email: normalEmail }).lean();
 
-    // ── Duplicate check (case-insensitive via normalised email) ───────────────
-    const existing = await WorkshopPublicRegistration.findOne({ workshopId, email: normalEmail });
+    // ── Duplicate check: same email for THIS workshop only ────────────────────
+    const existing = await findRegistrationForWorkshop(workshopOid, normalEmail);
     if (existing) {
       if (existing.registrationStatus === 'Rejected' || existing.registrationStatus === 'Cancelled') {
         existing.fullName       = cleanName;
@@ -186,27 +226,23 @@ router.post('/register', async (req, res) => {
         existing.linkedin       = (linkedin || '').trim();
         existing.github         = (github   || '').trim();
         existing.workshopName   = workshop.title;
+        existing.email          = normalEmail;
         existing.userId         = existingUser?._id || existing.userId || null;
         existing.registrationStatus = 'Registered';
         existing.registrationDate   = new Date();
         await existing.save();
 
         const newCount = activeRegCount + 1;
-        await Workshop.findByIdAndUpdate(workshopId, {
+        await Workshop.findByIdAndUpdate(workshopOid, {
           registrationCount: newCount,
           availableSeats: Math.max(0, workshop.maxSeats - newCount),
         });
 
-        return res.status(201).json({ success: true, message: 'Registration successful', data: existing });
+        return workshopRegistrationResponse(res, existing);
       }
 
-      if (existing.registrationStatus === 'Registered' || existing.registrationStatus === 'Approved') {
-        return res.status(200).json({
-          success: true,
-          message: 'You are already registered for this workshop.',
-          data: existing,
-          alreadyRegistered: true,
-        });
+      if (ACTIVE_WORKSHOP_REG_STATUSES.includes(existing.registrationStatus)) {
+        return workshopRegistrationResponse(res, existing, { alreadyRegistered: true });
       }
     }
 
@@ -215,7 +251,7 @@ router.post('/register', async (req, res) => {
 
     // ── Create registration ───────────────────────────────────────────────────
     const registration = await WorkshopPublicRegistration.create({
-      workshopId,
+      workshopId:         workshopOid,
       workshopName:       workshop.title,
       fullName:           cleanName,
       email:              normalEmail,
@@ -235,27 +271,28 @@ router.post('/register', async (req, res) => {
 
     // ── Update seat counts ────────────────────────────────────────────────────
     const newCount = activeRegCount + 1;
-    await Workshop.findByIdAndUpdate(workshopId, {
+    await Workshop.findByIdAndUpdate(workshopOid, {
       registrationCount: newCount,
       availableSeats: Math.max(0, workshop.maxSeats - newCount),
     });
 
-    return res.status(201).json({ success: true, message: 'Registration successful', data: registration });
+    return workshopRegistrationResponse(res, registration);
   } catch (err) {
     if (err.code === 11000) {
-      const dup = await WorkshopPublicRegistration.findOne({
-        workshopId: req.body?.workshopId,
-        email: String(req.body?.email || '').trim().toLowerCase(),
-      }).lean();
-      if (dup) {
-        return res.status(200).json({
-          success: true,
-          message: 'You are already registered for this workshop.',
-          data: dup,
-          alreadyRegistered: true,
-        });
+      const rawWorkshopId = String(req.body?.workshopId || '').trim();
+      const workshopOid = isValidId(rawWorkshopId) ? new mongoose.Types.ObjectId(rawWorkshopId) : null;
+      const normalEmail = normalizeWorkshopRegEmail(req.body?.email);
+      const dup = workshopOid ? await findRegistrationForWorkshop(workshopOid, normalEmail) : null;
+
+      if (dup && ACTIVE_WORKSHOP_REG_STATUSES.includes(dup.registrationStatus)) {
+        return workshopRegistrationResponse(res, dup, { alreadyRegistered: true });
       }
-      return res.status(409).json({ success: false, message: 'Already registered for this workshop.' });
+
+      console.error('Workshop registration duplicate key (not same-workshop email):', err.message);
+      return res.status(500).json({
+        success: false,
+        message: 'Registration could not be completed. Please try again.',
+      });
     }
     return res.status(500).json({ success: false, message: err.message });
   }

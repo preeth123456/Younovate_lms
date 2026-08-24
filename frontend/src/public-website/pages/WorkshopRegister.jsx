@@ -202,7 +202,11 @@ export default function WorkshopRegister() {
     }));
 
     if (registerForWorkshop.fulfilled.match(result)) {
-      setSuccessMsg('Registration successful! You will receive a confirmation shortly.');
+      if (result.payload?.alreadyRegistered) {
+        setSuccessMsg('You are already registered for this workshop.');
+      } else {
+        setSuccessMsg('Registration successful! You will receive a confirmation shortly.');
+      }
       setTimeout(() => navigate('/workshops'), 3000);
     }
   };

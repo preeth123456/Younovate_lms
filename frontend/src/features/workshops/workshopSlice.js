@@ -38,8 +38,16 @@ export const registerForWorkshop = createAsyncThunk(
   'workshops/register',
   async (formData, { rejectWithValue }) => {
     try {
-      const { data } = await axios.post(`${API}/api/workshops/register`, formData);
-      return data.data || data;
+      const { data } = await axios.post(`${API}/api/workshops/register`, {
+        ...formData,
+        workshopId: String(formData.workshopId || '').trim(),
+        email: String(formData.email || '').trim().toLowerCase(),
+      });
+      return {
+        registration: data.data,
+        message: data.message,
+        alreadyRegistered: Boolean(data.alreadyRegistered),
+      };
     } catch (err) {
       return rejectWithValue(err.response?.data?.message || 'Registration failed');
     }
