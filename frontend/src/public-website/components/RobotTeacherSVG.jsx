@@ -111,7 +111,7 @@ export default function RobotTeacherSVG() {
 
       {/* Holographic board */}
       <div style={{ position: 'absolute', left: '50%', top: 210, transform: 'translateX(-50%)', width: '56%', maxWidth: 420 }}>
-        <svg viewBox="0 0 420 220" width="100%" height="auto" style={{ display: 'block', filter: 'drop-shadow(0 0 18px rgba(37,99,235,0.35))' }}>
+        <svg viewBox="0 0 420 220" width="100%" style={{ display: 'block', height: 'auto', filter: 'drop-shadow(0 0 18px rgba(37,99,235,0.35))' }}>
           <defs>
             <linearGradient id="boardGrad" x1="0" y1="0" x2="1" y2="1">
               <stop offset="0%" stopColor={youvaTheme.colors.brand2} stopOpacity="0.35" />
@@ -161,7 +161,7 @@ export default function RobotTeacherSVG() {
 
       {/* Robot (simplified, cinematic) */}
       <div style={{ position: 'absolute', left: '50%', top: 150, transform: 'translateX(-50%)', width: '54%', maxWidth: 340 }}>
-        <svg viewBox="0 0 280 420" width="100%" height="auto">
+        <svg viewBox="0 0 280 420" width="100%" style={{ display: 'block', height: 'auto' }}>
           <defs>
             <linearGradient id="rBody" x1="0" y1="0" x2="1" y2="1">
               <stop offset="0%" stopColor={youvaTheme.colors.brand2} stopOpacity="0.55" />

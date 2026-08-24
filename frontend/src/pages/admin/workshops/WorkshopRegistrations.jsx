@@ -48,6 +48,7 @@ export default function WorkshopRegistrationsAdmin() {
   const status = useSelector(selectWsRegistrationsStatus);
 
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [page, setPage] = useState(1);
   const [viewReg, setViewReg] = useState(null);
@@ -129,20 +130,30 @@ export default function WorkshopRegistrationsAdmin() {
 
   const load = (p = page) => {
     dispatch(fetchWorkshopRegistrations({
-      page: p, limit: 20,
-      search: search || undefined,
+      page: p,
+      limit: 20,
+      search: debouncedSearch || undefined,
       status: filterStatus || undefined,
     }));
   };
 
-  useEffect(() => { load(1); setPage(1); }, [filterStatus]);
-
   useEffect(() => {
-    const t = setTimeout(() => { load(1); setPage(1); }, 400);
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 400);
     return () => clearTimeout(t);
   }, [search]);
 
-  useEffect(() => { load(page); }, [page]);
+  useEffect(() => {
+    setPage(1);
+  }, [filterStatus, debouncedSearch]);
+
+  useEffect(() => {
+    dispatch(fetchWorkshopRegistrations({
+      page,
+      limit: 20,
+      search: debouncedSearch || undefined,
+      status: filterStatus || undefined,
+    }));
+  }, [dispatch, page, filterStatus, debouncedSearch]);
 
   const handleStatusUpdate = async (id, newStatus, regName, regEmail) => {
     setBusyId(id);
@@ -437,10 +448,15 @@ const handleDelete = async (id, name) => {
       </div>
 
       <div style={{ ...S.card, overflow: 'hidden' }}>
-        {status === 'loading' ? (
+        {status === 'loading' && registrations.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: '#94A3B8' }}>Loading registrations...</div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
+            {status === 'loading' && registrations.length > 0 && (
+              <div style={{ padding: '8px 14px', fontSize: 12, color: '#64748B', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+                Refreshing…
+              </div>
+            )}
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
               <thead>
                 <tr>
