@@ -160,6 +160,13 @@ export default function WorkshopRegistrationsAdmin() {
     try {
       const result = await dispatch(updateWorkshopRegistration({ id, registrationStatus: newStatus }));
       if (updateWorkshopRegistration.fulfilled.match(result)) {
+        if (newStatus === 'Approved') {
+          if (result.payload?.emailWarning) {
+            toast.error(result.payload.emailWarning);
+          } else if (result.payload?.emailSent) {
+            toast.success('Registration approved and email sent.');
+          }
+        }
         // Check if temporaryPassword was returned (dev mode)
         if (result.payload?.temporaryPassword && newStatus === 'Approved') {
           setTempPwModal({

@@ -82,6 +82,28 @@ function workshopRegEmailRegex(normalEmail) {
 
 const ACTIVE_WORKSHOP_REG_STATUSES = ['Registered', 'Approved'];
 
+function getFrontendUrl() {
+  const raw = process.env.FRONTEND_URL || process.env.PUBLIC_FRONTEND_URL || 'https://younovate-lms.vercel.app';
+  const url = String(raw).trim().replace(/\/+$/, '');
+  if (!url) return 'https://younovate-lms.vercel.app';
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
+function safeMaxSeats(workshop) {
+  const n = Number(workshop?.maxSeats);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+async function updateWorkshopSeatCounts(workshop, workshopOid, activeRegCount) {
+  const maxSeats = safeMaxSeats(workshop);
+  const newCount = activeRegCount + 1;
+  const patch = { registrationCount: newCount };
+  if (maxSeats > 0) {
+    patch.availableSeats = Math.max(0, maxSeats - newCount);
+  }
+  await Workshop.findByIdAndUpdate(workshopOid, patch);
+}
+
 /** Find registration for one workshop + email (case-insensitive, legacy-safe). */
 async function findRegistrationForWorkshop(workshopOid, normalEmail) {
   if (!workshopOid || !normalEmail) return null;
@@ -91,6 +113,30 @@ async function findRegistrationForWorkshop(workshopOid, normalEmail) {
     workshopId: workshopOid,
     email: { $regex: workshopRegEmailRegex(normalEmail) },
   });
+}
+
+async function resolveDuplicateRegistration(workshopOid, normalEmail, mongoErr) {
+  const keyPattern = mongoErr?.keyPattern || {};
+  const keyValue = mongoErr?.keyValue || {};
+  const emailFromKey = normalizeWorkshopRegEmail(keyValue.email || normalEmail);
+
+  let dup = await findRegistrationForWorkshop(workshopOid, emailFromKey);
+  if (!dup && keyValue.workshopId) {
+    try {
+      const oid = new mongoose.Types.ObjectId(keyValue.workshopId);
+      dup = await findRegistrationForWorkshop(oid, emailFromKey);
+    } catch (_) {}
+  }
+
+  // Stale global unique index on email only (wrong for multi-workshop registrations)
+  if (!dup && keyPattern.email && !keyPattern.workshopId) {
+    const any = await WorkshopPublicRegistration.findOne({ email: emailFromKey });
+    if (any && String(any.workshopId) === String(workshopOid)) {
+      dup = any;
+    }
+  }
+
+  return dup;
 }
 
 function workshopRegistrationResponse(res, registration, { alreadyRegistered = false } = {}) {
@@ -112,7 +158,10 @@ function workshopRegistrationResponse(res, registration, { alreadyRegistered = f
 
 // POST /api/workshops/register — public registration (MUST be before /:id)
 router.post('/register', async (req, res) => {
+  const logCtx = { workshopId: req.body?.workshopId, email: normalizeWorkshopRegEmail(req.body?.email) };
   try {
+    console.log('Workshop registration started', logCtx);
+
     const {
       workshopId, fullName, email, phone, whatsapp,
       college, qualification, city, state,
@@ -201,12 +250,15 @@ router.post('/register', async (req, res) => {
     if (!workshop.registrationOpen)
       return res.status(400).json({ success: false, message: 'Registration is closed for this workshop.' });
 
+    console.log('Workshop registration validated', { ...logCtx, workshopTitle: workshop.title });
+
     // ── Capacity check ────────────────────────────────────────────────────────
     const activeRegCount = await WorkshopPublicRegistration.countDocuments({
       workshopId: workshopOid,
       registrationStatus: { $nin: ['Cancelled', 'Rejected'] },
     });
-    if (workshop.maxSeats > 0 && activeRegCount >= workshop.maxSeats)
+    const maxSeats = safeMaxSeats(workshop);
+    if (maxSeats > 0 && activeRegCount >= maxSeats)
       return res.status(400).json({ success: false, message: 'Workshop Full. No seats available.' });
 
     const existingUser = await User.findOne({ email: normalEmail }).lean();
@@ -232,24 +284,21 @@ router.post('/register', async (req, res) => {
         existing.registrationDate   = new Date();
         await existing.save();
 
-        const newCount = activeRegCount + 1;
-        await Workshop.findByIdAndUpdate(workshopOid, {
-          registrationCount: newCount,
-          availableSeats: Math.max(0, workshop.maxSeats - newCount),
-        });
+        await updateWorkshopSeatCounts(workshop, workshopOid, activeRegCount);
 
+        console.log('Workshop registration reactivated', { ...logCtx, registrationId: existing._id });
         return workshopRegistrationResponse(res, existing);
       }
 
-      if (ACTIVE_WORKSHOP_REG_STATUSES.includes(existing.registrationStatus)) {
-        return workshopRegistrationResponse(res, existing, { alreadyRegistered: true });
-      }
+      return workshopRegistrationResponse(res, existing, { alreadyRegistered: true });
     }
 
     // ── Link to existing User account if one matches this email ────────────────
     const userId = existingUser?._id || null;
 
-    // ── Create registration ───────────────────────────────────────────────────
+    console.log('Workshop registration creating document', logCtx);
+
+    // ── Create registration (no email sent at this step) ───────────────────
     const registration = await WorkshopPublicRegistration.create({
       workshopId:         workshopOid,
       workshopName:       workshop.title,
@@ -269,32 +318,51 @@ router.post('/register', async (req, res) => {
       registrationDate:   new Date(),
     });
 
-    // ── Update seat counts ────────────────────────────────────────────────────
-    const newCount = activeRegCount + 1;
-    await Workshop.findByIdAndUpdate(workshopOid, {
-      registrationCount: newCount,
-      availableSeats: Math.max(0, workshop.maxSeats - newCount),
-    });
+    await updateWorkshopSeatCounts(workshop, workshopOid, activeRegCount);
 
+    console.log('Workshop registration completed', { ...logCtx, registrationId: registration._id });
     return workshopRegistrationResponse(res, registration);
   } catch (err) {
     if (err.code === 11000) {
       const rawWorkshopId = String(req.body?.workshopId || '').trim();
       const workshopOid = isValidId(rawWorkshopId) ? new mongoose.Types.ObjectId(rawWorkshopId) : null;
       const normalEmail = normalizeWorkshopRegEmail(req.body?.email);
-      const dup = workshopOid ? await findRegistrationForWorkshop(workshopOid, normalEmail) : null;
+      const dup = workshopOid ? await resolveDuplicateRegistration(workshopOid, normalEmail, err) : null;
 
-      if (dup && ACTIVE_WORKSHOP_REG_STATUSES.includes(dup.registrationStatus)) {
-        return workshopRegistrationResponse(res, dup, { alreadyRegistered: true });
+      console.error('Workshop registration duplicate key', {
+        ...logCtx,
+        keyPattern: err.keyPattern,
+        resolved: dup?._id,
+        message: err.message,
+      });
+
+      if (dup) {
+        return workshopRegistrationResponse(res, dup, {
+          alreadyRegistered: ACTIVE_WORKSHOP_REG_STATUSES.includes(dup.registrationStatus),
+        });
       }
 
-      console.error('Workshop registration duplicate key (not same-workshop email):', err.message);
-      return res.status(500).json({
+      return res.status(409).json({
         success: false,
-        message: 'Registration could not be completed. Please try again.',
+        message: 'You are already registered for this workshop.',
       });
     }
-    return res.status(500).json({ success: false, message: err.message });
+
+    if (err.name === 'ValidationError') {
+      const messages = Object.values(err.errors || {}).map((e) => e.message).join(', ');
+      console.error('Workshop registration validation error', { ...logCtx, message: messages });
+      return res.status(400).json({ success: false, message: messages || 'Invalid registration data.' });
+    }
+
+    console.error('Workshop registration error', {
+      ...logCtx,
+      message: err.message,
+      stack: err.stack,
+    });
+    return res.status(500).json({
+      success: false,
+      message: 'Registration could not be completed. Please try again or contact support.',
+    });
   }
 });
 
@@ -425,7 +493,12 @@ router.put('/admin/registrations/:id', protect, authorize('admin'), async (req, 
     });
 
     // ── Approval flow with auto user creation ─────────────────────────────
+    let approvalEmailSent = false;
+    let approvalEmailError = null;
+    let devTemporaryPassword = null;
+
     if (updateData.registrationStatus === 'Approved' && reg.registrationStatus !== 'Approved') {
+      const loginUrl = `${getFrontendUrl()}/login`;
       // Step 1: Check Users collection by email
       const existingUser = await User.findOne({ email: reg.email }).select('_id name email isActive').lean();
 
@@ -437,28 +510,30 @@ router.put('/admin/registrations/:id', protect, authorize('admin'), async (req, 
         if (!existingUser.isActive) {
           await User.findByIdAndUpdate(userId, { $set: { isActive: true } });
         }
-        console.log(`✅ [DEBUG] Workshop approval: Reusing existing user ${existingUser.email} (${userId})`);
+        console.log(`Workshop approval: reusing user ${existingUser.email} (${userId})`);
 
         // ── Send Workshop Approved email (existing user) ──
         try {
           const workshopTitle = reg.workshopName || 'Workshop';
-          const loginUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`;
-          console.log(`📧 [DEBUG] Sending workshop approved email to ${reg.email}...`);
+          console.log(`Sending workshop approved email to ${reg.email}`);
           const emailResult = await sendEmail({
             to: reg.email,
             subject: `Your Registration for "${workshopTitle}" has been Approved!`,
             html: workshopApprovedTemplate(reg.fullName, workshopTitle, loginUrl),
           });
-          console.log(`✅ [DEBUG] Workshop approved email sent — messageId: ${emailResult.messageId}`);
+          approvalEmailSent = true;
+          console.log(`Workshop approved email sent — messageId: ${emailResult.messageId}`);
         } catch (emailErr) {
-          console.error(`❌ [DEBUG] Failed to send workshop approved email to ${reg.email}:`, emailErr.message);
-          console.error(emailErr.stack);
-          // Non-blocking — approval still succeeds
+          approvalEmailError = emailErr.message;
+          console.error(`Failed to send workshop approved email to ${reg.email}:`, emailErr.message);
         }
       } else {
         // Step 2: Auto-create trainee account with temporary password
-        const tempPassword = crypto.randomBytes(4).toString('hex') + 'Tmp@1'; // e.g. "a1b2c3d4Tmp@1"
-        console.log(`🔑 [DEBUG] Generated temporary password for ${reg.email}: ${tempPassword}`);
+        const tempPassword = crypto.randomBytes(4).toString('hex') + 'Tmp@1';
+        if (process.env.NODE_ENV !== 'production') {
+          devTemporaryPassword = tempPassword;
+        }
+        console.log(`Workshop approval: creating user for ${reg.email}`);
 
         const newUser = await User.create({
           name:                reg.fullName,
@@ -480,38 +555,24 @@ router.put('/admin/registrations/:id', protect, authorize('admin'), async (req, 
             message: 'Failed to persist user account. Please try again.',
           });
         }
-        console.log(`✅ [DEBUG] User created with _id: ${verifiedUser._id}, isTemporaryPassword: ${verifiedUser.isTemporaryPassword}, password hash exists: ${!!verifiedUser.password}`);
+        console.log(`Workshop approval: user created ${verifiedUser._id}`);
 
         userId = verifiedUser._id;
-
-        // Step 3b: Verify bcrypt comparison works
-        try {
-          const UserModel = require('../models/User');
-          const pwCheckUser = await UserModel.findById(verifiedUser._id).select('+password');
-          const pwMatch = await pwCheckUser.comparePassword(tempPassword);
-          console.log(`🔐 [DEBUG] bcrypt.compare("${tempPassword}", storedHash) = ${pwMatch}`);
-          if (!pwMatch) {
-            console.error(`❌ [DEBUG] PASSWORD MISMATCH! The stored hash doesn't match the generated password!`);
-          }
-        } catch (pwErr) {
-          console.error(`❌ [DEBUG] Error verifying password:`, pwErr.message);
-        }
 
         // ── Send Login Credentials email (new user — includes temp password) ──
         try {
           const workshopTitle = reg.workshopName || 'Workshop';
-          const loginUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`;
-          console.log(`📧 [DEBUG] Sending login credentials email to ${reg.email}...`);
+          console.log(`Sending login credentials email to ${reg.email}`);
           const emailResult = await sendEmail({
             to: reg.email,
             subject: `Welcome to ${workshopTitle} — Your Login Credentials`,
             html: loginCredentialsTemplate(reg.fullName, reg.email, tempPassword, workshopTitle, loginUrl),
           });
-          console.log(`✅ [DEBUG] Login credentials email sent to ${reg.email} — messageId: ${emailResult.messageId}`);
+          approvalEmailSent = true;
+          console.log(`Login credentials email sent to ${reg.email} — messageId: ${emailResult.messageId}`);
         } catch (emailErr) {
-          console.error(`❌ [DEBUG] Failed to send login credentials email to ${reg.email}:`, emailErr.message);
-          console.error(emailErr.stack);
-          // Non-blocking — approval still succeeds
+          approvalEmailError = emailErr.message;
+          console.error(`Failed to send login credentials email to ${reg.email}:`, emailErr.message);
         }
       }
 
@@ -559,7 +620,19 @@ router.put('/admin/registrations/:id', protect, authorize('admin'), async (req, 
 
     if (!updated) return res.status(404).json({ success: false, message: 'Registration not found' });
 
-    return res.json({ success: true, data: updated });
+    const response = { success: true, data: updated };
+    if (updateData.registrationStatus === 'Approved') {
+      response.emailSent = approvalEmailSent;
+      if (approvalEmailError) {
+        response.emailWarning = 'Registration approved but the email could not be sent. Check Resend configuration on Render.';
+        response.emailError = approvalEmailError;
+      }
+      if (devTemporaryPassword && process.env.NODE_ENV !== 'production') {
+        response.temporaryPassword = devTemporaryPassword;
+      }
+    }
+
+    return res.json(response);
   } catch (err) {
     // Handle duplicate key errors (race condition on email)
     if (err.code === 11000) {

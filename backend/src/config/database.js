@@ -3,6 +3,7 @@ const dns = require('dns');
 dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 const mongoose = require('mongoose');
+const { repairWorkshopPublicRegistrationIndexes } = require('./workshopRegistrationIndexes');
 
 const connectDB = async () => {
   const uri = process.env.MONGODB_URI;
@@ -21,6 +22,8 @@ const connectDB = async () => {
     });
 
     console.log(`✅  MongoDB connected: ${conn.connection.host} → ${conn.connection.name}`);
+
+    await repairWorkshopPublicRegistrationIndexes(conn.connection);
 
     // Log any future connection errors without crashing
     mongoose.connection.on('error', (err) =>
