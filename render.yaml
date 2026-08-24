@@ -8,6 +8,8 @@
 #   Build Command:   npm install
 #   Start Command:   npm start
 #   NODE_ENV:        production
+#   RESEND_API_KEY:  your Resend API key (recommended for email)
+#   RESEND_FROM:     verified sender, e.g. Younovate Labs <noreply@younovate.in>
 
 services:
   - type: web

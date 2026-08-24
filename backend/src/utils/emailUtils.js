@@ -1,8 +1,16 @@
 // src/utils/emailUtils.js
 'use strict';
 const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
-// ── SMTP Configuration ────────────────────────────────────────────────────────
+const resendApiKey = process.env.RESEND_API_KEY;
+const useResend = Boolean(resendApiKey);
+
+const defaultFrom = process.env.RESEND_FROM
+  || process.env.SMTP_FROM
+  || 'Younovate LMS <onboarding@resend.dev>';
+
+// ── SMTP (fallback when RESEND_API_KEY is not set) ────────────────────────────
 const smtpConfig = {
   host:   process.env.SMTP_HOST,
   port:   Number(process.env.SMTP_PORT) || 587,
@@ -14,82 +22,78 @@ const smtpConfig = {
 };
 
 console.log('\n════════════════════════════════════════════');
-console.log('📧 SMTP Configuration');
+console.log('📧 Email Configuration');
 console.log('════════════════════════════════════════════');
-console.log(`   SMTP_HOST:        ${process.env.SMTP_HOST || 'NOT SET'}`);
-console.log(`   SMTP_PORT:        ${Number(process.env.SMTP_PORT) || 587}`);
-console.log(`   SMTP_SECURE:      ${process.env.SMTP_SECURE || 'false'}`);
-console.log(`   SMTP_USER:        ${process.env.SMTP_USER || 'NOT SET'}`);
-console.log(`   SMTP_PASS:        ${process.env.SMTP_PASS ? process.env.SMTP_PASS.substring(0, 10) + '...' : 'NOT SET'}`);
-console.log(`   SMTP_FROM:        ${process.env.SMTP_FROM || 'NOT SET'}`);
+console.log(`   Provider:         ${useResend ? 'Resend API' : 'SMTP (Nodemailer)'}`);
+if (useResend) {
+  console.log(`   RESEND_API_KEY:   ${resendApiKey.substring(0, 8)}...`);
+  console.log(`   RESEND_FROM:      ${defaultFrom}`);
+} else {
+  console.log(`   SMTP_HOST:        ${process.env.SMTP_HOST || 'NOT SET'}`);
+  console.log(`   SMTP_PORT:        ${Number(process.env.SMTP_PORT) || 587}`);
+  console.log(`   SMTP_USER:        ${process.env.SMTP_USER || 'NOT SET'}`);
+  console.log(`   SMTP_FROM:        ${defaultFrom}`);
+}
 console.log('════════════════════════════════════════════\n');
 
-const transporter = nodemailer.createTransport(smtpConfig);
+const transporter = useResend ? null : nodemailer.createTransport(smtpConfig);
+const resendClient = useResend ? new Resend(resendApiKey) : null;
 
-// ── Verify SMTP connection on startup ──────────────────────────────────────
-transporter.verify((err, success) => {
-  if (err) {
-    console.error('❌ SMTP CONNECTION VERIFICATION FAILED:');
-    console.error(`   Error: ${err.message}`);
-    console.error(`   Full error:`, err);
-    console.error('   Check your SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS in .env');
-    console.error('   For Brevo: SMTP_HOST should be smtp-relay.brevo.com');
-  } else {
-    console.log(`✅ SMTP connection verified successfully — ready to send emails`);
+if (!useResend && transporter) {
+  transporter.verify((err) => {
+    if (err) {
+      console.error('❌ SMTP CONNECTION VERIFICATION FAILED:', err.message);
+      console.error('   Set RESEND_API_KEY to use Resend instead of SMTP.');
+    } else {
+      console.log('✅ SMTP connection verified — ready to send emails');
+    }
+  });
+} else if (useResend) {
+  console.log('✅ Resend API configured — ready to send emails');
+}
+
+async function sendViaResend({ to, subject, html, from }) {
+  const { data, error } = await resendClient.emails.send({
+    from,
+    to: Array.isArray(to) ? to : [to],
+    subject,
+    html,
+  });
+  if (error) {
+    const err = new Error(error.message || 'Resend API error');
+    err.name = 'ResendError';
+    err.details = error;
+    throw err;
   }
-});
+  return { messageId: data?.id, response: 'Resend OK', accepted: [to], rejected: [] };
+}
+
+async function sendViaSmtp({ to, subject, html, from }) {
+  return transporter.sendMail({ from, to, subject, html });
+}
 
 const sendEmail = async ({ to, subject, html }) => {
-  const from = process.env.SMTP_FROM || `"Younovate LMS" <noreply@younovate.in>`;
-  
-  console.log(`\n📧 SENDING EMAIL`);
-  console.log(`   From:    ${from}`);
-  console.log(`   To:      ${to}`);
-  console.log(`   Subject: ${subject}`);
-  
+  const from = defaultFrom;
+
+  console.log('\n📧 SENDING EMAIL');
+  console.log(`   Provider: ${useResend ? 'Resend' : 'SMTP'}`);
+  console.log(`   From:     ${from}`);
+  console.log(`   To:       ${to}`);
+  console.log(`   Subject:  ${subject}`);
+
   try {
-    const info = await transporter.sendMail({
-      from,
-      to,
-      subject,
-      html,
-    });
-    
+    const info = useResend
+      ? await sendViaResend({ to, subject, html, from })
+      : await sendViaSmtp({ to, subject, html, from });
+
     console.log(`✅ Email sent successfully to ${to}`);
     console.log(`   Message ID: ${info.messageId}`);
-    console.log(`   Response:   ${info.response}`);
-    console.log(`   Accepted:   ${info.accepted}`);
-    console.log(`   Rejected:   ${info.rejected}`);
-    
     return info;
   } catch (err) {
     console.error(`❌ EMAIL SENDING FAILED to ${to}`);
-    console.error(`   Error name:    ${err.name}`);
-    console.error(`   Error message: ${err.message}`);
-    console.error(`   Error code:    ${err.code}`);
-    console.error(`   Error command: ${err.command}`);
-    console.error(`   Full error:`, err);
-    console.error(`   SMTP Host: ${process.env.SMTP_HOST}`);
-    console.error(`   SMTP Port: ${process.env.SMTP_PORT}`);
-    console.error(`   SMTP User: ${process.env.SMTP_USER}`);
-    
-    // Check for common issues
-    if (err.message && err.message.includes('Invalid login')) {
-      console.error(`   🔴 INVALID LOGIN: Check SMTP_USER and SMTP_PASS`);
-      console.error(`   🔴 For Brevo, SMTP_PASS should be your xsmtpsib-... API key`);
-    }
-    if (err.message && err.message.includes('getaddrinfo')) {
-      console.error(`   🔴 DNS LOOKUP FAILED: Check SMTP_HOST`);
-      console.error(`   🔴 For Brevo, SMTP_HOST should be smtp-relay.brevo.com`);
-    }
-    if (err.code === 'EAUTH') {
-      console.error(`   🔴 AUTHENTICATION FAILED: Check SMTP_USER and SMTP_PASS`);
-    }
-    if (err.code === 'ESOCKET') {
-      console.error(`   🔴 SOCKET ERROR: Check SMTP_HOST and SMTP_PORT`);
-    }
-    
-    throw err; // Re-throw so caller can handle
+    console.error(`   Error: ${err.message}`);
+    if (err.details) console.error('   Resend details:', err.details);
+    throw err;
   }
 };
 
