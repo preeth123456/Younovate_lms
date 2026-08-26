@@ -47,6 +47,20 @@ export default function TrainerRecordingPlayback() {
       .finally(() => setLoading(false));
   }, [id, token]);
 
+  // Poll while recording is still processing
+  useEffect(() => {
+    if (!id || !token || !recording) return undefined;
+    if (!['processing', 'active', 'starting'].includes(recording.status)) return undefined;
+    const headers = { Authorization: `Bearer ${token}` };
+    const poll = setInterval(() => {
+      axios.get(`${API}/api/trainer/recordings/${id}`, { headers })
+        .then(res => setRecording(res.data?.recording || null))
+        .catch(() => {});
+    }, 3000);
+    const timeout = setTimeout(() => clearInterval(poll), 90000);
+    return () => { clearInterval(poll); clearTimeout(timeout); };
+  }, [id, token, recording?.status]);
+
   if (loading) {
     return <div style={S.page}><div style={{ textAlign: 'center', padding: 60, color: '#94A3B8' }}>Loading recording…</div></div>;
   }

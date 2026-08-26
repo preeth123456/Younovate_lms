@@ -3,7 +3,7 @@ import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { useAppDispatch, useAppSelector } from './app/hooks';
-import { fetchCurrentUser, selectIsAuthenticated, selectUserRole } from './features/auth/authSlice';
+import { fetchCurrentUser, selectIsAuthenticated, selectUserRole, selectAuthStatus } from './features/auth/authSlice';
 
 // ── Public Website ────────────────────────────────────────────────────────
 import PublicLayout      from './public-website/layouts/PublicLayout';
@@ -25,7 +25,6 @@ import HRLayout      from './components/hr/HRLayout';
 
 // ── Pages ─────────────────────────────────────────────────────────────────
 import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ForcePasswordChangePage from './pages/ForcePasswordChangePage';
 
@@ -93,6 +92,7 @@ import LiveWorkshop         from './pages/trainer/LiveWorkshop';
 import WorkshopParticipants from './pages/trainer/WorkshopParticipants';
 import WorkshopResources    from './pages/trainer/WorkshopResources';
 import WorkshopFeedback     from './pages/trainer/WorkshopFeedback';
+import TrainerWorkshopAttendance from './pages/trainer/WorkshopAttendance';
 import WorkshopCertificates from './pages/trainer/WorkshopCertificates';
 
 
@@ -122,7 +122,15 @@ import HRSettings from './pages/hr/Settings';
 function ProtectedRoute({ allowedRoles }) {
   const isAuthenticated = useAppSelector(selectIsAuthenticated);
   const role            = useAppSelector(selectUserRole);
+  const authStatus      = useAppSelector(selectAuthStatus);
 
+  if (authStatus === 'loading') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40vh', color: '#64748b' }}>
+        Loading…
+      </div>
+    );
+  }
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (allowedRoles && !allowedRoles.includes(role)) return <Navigate to="/login" replace />;
   return <Outlet />;
@@ -140,7 +148,7 @@ function App() {
   const isAuthenticated = useAppSelector(selectIsAuthenticated);
   
 
-  // Re-hydrate user on page reload
+  // Re-hydrate user on page reload; validate stale persisted sessions
   useEffect(() => {
     if (isAuthenticated) dispatch(fetchCurrentUser());
   }, []); // eslint-disable-line
@@ -150,7 +158,7 @@ function App() {
       <Routes>
         {/* ── Auth pages (no layout wrapper) ──────────────────────────── */}
         <Route path="/login"                element={<LoginPage />} />
-        <Route path="/register"             element={<RegisterPage />} />
+        <Route path="/register"             element={<Navigate to="/signup" replace />} />
         <Route path="/forgot_password"      element={<ForgotPasswordPage />} />
         <Route path="/force-password-change" element={<ForcePasswordChangePage />} />
 
@@ -236,6 +244,7 @@ function App() {
             <Route path="workshops"              element={<MyWorkshops />} />
             <Route path="workshop-batches"        element={<TrainerBatches />} />
             <Route path="workshops/live"         element={<LiveWorkshop />} />
+            <Route path="workshops/attendance"  element={<TrainerWorkshopAttendance />} />
             <Route path="workshops/participants" element={<WorkshopParticipants />} />
             <Route path="workshops/resources"    element={<WorkshopResources />} />
             <Route path="workshops/feedback"     element={<WorkshopFeedback />} />

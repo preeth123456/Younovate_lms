@@ -65,9 +65,10 @@ export const fetchMyWorkshopSessions = createAsyncThunk(
 
 export const joinWorkshopSession = createAsyncThunk(
   'trainee/joinWorkshopSession',
-  async (sessionId, { getState, rejectWithValue }) => {
+  async (sessionId, { getState, dispatch, rejectWithValue }) => {
     try {
       const { data } = await axios.post(`${API}/api/trainee/workshop-sessions/${sessionId}/join`, {}, authCfg(getState));
+      dispatch(fetchMyWorkshopAttendance());
       return { sessionId, ...data };
     } catch (err) {
       return rejectWithValue(errMsg(err));
@@ -77,9 +78,10 @@ export const joinWorkshopSession = createAsyncThunk(
 
 export const leaveWorkshopSession = createAsyncThunk(
   'trainee/leaveWorkshopSession',
-  async (sessionId, { getState, rejectWithValue }) => {
+  async (sessionId, { getState, dispatch, rejectWithValue }) => {
     try {
       const { data } = await axios.post(`${API}/api/trainee/workshop-sessions/${sessionId}/leave`, {}, authCfg(getState));
+      dispatch(fetchMyWorkshopAttendance());
       return data;
     } catch (err) {
       return rejectWithValue(errMsg(err));

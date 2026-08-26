@@ -215,6 +215,16 @@ const slice = createSlice({
         const idx  = list.findIndex(r => r.studentId?.toString() === record.studentId?.toString());
         if (idx !== -1) list[idx] = record; else list.push(record);
         s.attendance[sessionId] = list;
+
+        const parts = s.participants[sessionId] || [];
+        const pIdx = parts.findIndex(p => {
+          const uid = p.userId?._id || p.userId;
+          return uid && record.studentId && uid.toString() === record.studentId.toString();
+        });
+        if (pIdx !== -1) {
+          parts[pIdx] = { ...parts[pIdx], attendance: record };
+          s.participants[sessionId] = parts;
+        }
       })
 
       .addCase(startWorkshopSession.fulfilled, (s, a) => {

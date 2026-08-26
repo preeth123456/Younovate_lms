@@ -23,6 +23,25 @@ const roomService     = new RoomServiceClient(host, apiKey, apiSecret);
 const egressClient    = new EgressClient(host, apiKey, apiSecret);
 const webhookReceiver = new WebhookReceiver(apiKey, apiSecret);
 
+function isLiveKitCloud() {
+  return LIVEKIT_URL.includes('livekit.cloud');
+}
+
+function isLocalDockerLiveKit() {
+  return /^wss?:\/\/(localhost|127\.0\.0\.1)/i.test(LIVEKIT_URL);
+}
+
+if (LIVEKIT_URL) {
+  const s3On = process.env.USE_S3_RECORDING === 'true';
+  if (isLiveKitCloud() && !s3On) {
+    console.warn('⚠️  LIVEKIT_URL points to LiveKit Cloud but USE_S3_RECORDING is not true.');
+    console.warn('   Cloud egress requires S3. For local Docker recording use:');
+    console.warn('   LIVEKIT_URL=ws://localhost:7880  LIVEKIT_API_KEY=devkey  (+ secret from livekit.yaml)');
+  } else if (isLocalDockerLiveKit()) {
+    console.log('✅ LiveKit: local Docker mode (egress → ./lms-recordings)');
+  }
+}
+
 // ── ONE canonical room name, used by BOTH trainer and trainee ─────────
 // trainer + trainees MUST derive the EXACT same room string from the session
 // id, or they end up in different rooms and can neither see/hear each other
@@ -69,18 +88,19 @@ async function generateLiveKitToken(
   return at.toJwt();            // server-sdk v2 → async
 }
 
-// ── Recording (best-effort; never blocks "go live") ───────────────────
+// ── Recording: Docker/local egress by default; S3 only when USE_S3_RECORDING=true ──
+function useS3Recording() {
+  return process.env.USE_S3_RECORDING === 'true';
+}
+
 function getS3UploadConfig() {
+  if (!useS3Recording()) return null;
   const bucket = process.env.S3_BUCKET || process.env.AWS_S3_BUCKET;
   const accessKey = process.env.S3_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID;
   const secretKey = process.env.S3_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
   const region = process.env.S3_REGION || process.env.AWS_REGION;
   if (!bucket || !accessKey || !secretKey || !region) return null;
   return { bucket, accessKey, secretKey, region };
-}
-
-function isLiveKitCloud() {
-  return LIVEKIT_URL.includes('livekit.cloud');
 }
 
 function buildFileOutput() {
@@ -102,21 +122,23 @@ function buildFileOutput() {
     });
   }
 
-  if (isLiveKitCloud()) {
-    throw new Error(
-      'LiveKit Cloud recording needs S3. Set S3_BUCKET (or AWS_S3_BUCKET), S3_ACCESS_KEY, S3_SECRET_KEY, and S3_REGION on the server.'
-    );
-  }
-
+  // Default: self-hosted LiveKit egress → ./lms-recordings bind mount (/out in container)
   return new EncodedFileOutput({
     fileType: EncodedFileType.MP4,
-    filepath: '/out/{room_name}/{time}.mp4', // self-hosted egress only
+    filepath: '/out/{room_name}/{time}.mp4',
   });
 }
 
 async function startRecording(roomName) {
   if (!apiKey || !apiSecret || !LIVEKIT_URL || !host) {
     throw new Error('LiveKit is not configured (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET).');
+  }
+
+  if (isLiveKitCloud() && process.env.USE_S3_RECORDING !== 'true') {
+    throw new Error(
+      'LiveKit Cloud recording requires S3 (set USE_S3_RECORDING=true). ' +
+      'For local Docker recording, set LIVEKIT_URL=ws://localhost:7880 and use devkey credentials from livekit.yaml.'
+    );
   }
 
   try {

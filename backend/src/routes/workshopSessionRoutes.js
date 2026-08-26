@@ -8,6 +8,7 @@ const mongoose      = require('mongoose');
 const Session       = require('../models/Session');
 const Recording     = require('../models/Recording');
 const WorkshopBatch = require('../models/WorkshopBatch');
+const User = require('../models/User');
 const { WorkshopPublicRegistration, WorkshopAttendance, WorkshopCertificate } = require('../models/WorkshopModels');
 const { protect, authorize } = require('../middleware/auth');
 const { generateLiveKitToken, roomNameFor, LIVEKIT_URL, startRecording, stopRecording, roomService } = require('../services/livekitService');
@@ -16,9 +17,55 @@ const { reconcileRecordingByEgressId, defaultRecordingStorage } = require('../ut
 const { rejectPastDateTime } = require('../utils/dateTimeValidation');
 const { isWorkshopParticipant, syncWorkshopStudent } = require('../utils/participantValidation');
 const { emitToRole, emitToSession } = require('../services/socketService');
+const { applyEffectiveSessionStatus, autoCompletePastWorkshopSessions } = require('../utils/sessionStatusUtils');
 
 const router    = express.Router();
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
+
+/** Reconcile a workshop session stuck in recordingStatus=processing (Docker/local egress). */
+async function reconcileProcessingSessionRecording(session) {
+  if (!session || session.recordingStatus !== 'processing') return session;
+
+  let egressId = session.egressId;
+  if (!egressId) {
+    const latest = await Recording.findOne({ sessionId: session._id }).sort({ createdAt: -1 }).lean();
+    egressId = latest?.egressId;
+  }
+
+  if (!egressId) {
+    if (session.recordingUrl) {
+      await Session.findByIdAndUpdate(session._id, { $set: { recordingStatus: 'available' } });
+      return { ...session, recordingStatus: 'available' };
+    }
+    return session;
+  }
+
+  try {
+    const reconciled = await reconcileRecordingByEgressId(egressId, { maxAttempts: 3, delayMs: 1500, markFailed: true });
+    if (reconciled?.status === 'completed') {
+      const update = {
+        recordingStatus: 'available',
+        recordingUrl: reconciled.url || session.recordingUrl,
+        egressId: '',
+      };
+      await Session.findByIdAndUpdate(session._id, { $set: update });
+      return { ...session, ...update };
+    }
+    if (reconciled?.status === 'failed') {
+      await Session.findByIdAndUpdate(session._id, { $set: { recordingStatus: 'failed', egressId: '' } });
+      return { ...session, recordingStatus: 'failed', egressId: '' };
+    }
+  } catch (err) {
+    console.warn('Workshop recording reconcile on read:', err.message);
+  }
+  return session;
+}
+
+function emitWorkshopAttendanceUpdate(sessionId, payload) {
+  try {
+    emitToSession(sessionId.toString(), 'attendance:update', { sessionId, ...payload });
+  } catch (_) {}
+}
 
 // Attendance threshold: >= 60% attendance → eligible for certificate
 const ATTENDANCE_ELIGIBILITY_PCT = 60;
@@ -51,6 +98,8 @@ router.get('/', protect, authorize('admin', 'trainer'), async (req, res) => {
     if (status) filter.status = status;
     if (req.user.role === 'trainer') filter.trainerId = req.user._id;
 
+    await autoCompletePastWorkshopSessions(Session, filter);
+
     const sessions = await Session.find(filter)
       .populate('trainerId', 'name email profilePicture')
       .populate({ path: 'workshopBatchId', populate: { path: 'workshopId', select: 'title' } })
@@ -58,7 +107,18 @@ router.get('/', protect, authorize('admin', 'trainer'), async (req, res) => {
       .limit(100)
       .lean();
 
-    const enriched = sessions.map(s => ({
+    let processingReconciled = 0;
+    const refreshed = [];
+    for (const s of sessions) {
+      if (s.recordingStatus === 'processing' && processingReconciled < 3) {
+        refreshed.push(await reconcileProcessingSessionRecording(s));
+        processingReconciled += 1;
+      } else {
+        refreshed.push(s);
+      }
+    }
+
+    const enriched = refreshed.map(s => applyEffectiveSessionStatus({
       ...s,
       workshopName: s.workshopBatchId?.workshopId?.title || '',
       batchName:    s.workshopBatchId?.batchName || '',
@@ -140,7 +200,8 @@ router.get('/:id', protect, authorize('admin', 'trainer'), async (req, res) => {
     if (req.user.role === 'trainer' && session.trainerId._id.toString() !== req.user._id.toString())
       return res.status(403).json({ success: false, message: 'Forbidden' });
 
-    return res.json({ success: true, session });
+    const reconciled = await reconcileProcessingSessionRecording(session);
+    return res.json({ success: true, session: reconciled });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -345,7 +406,7 @@ router.post('/:id/end', protect, authorize('trainer'), async (req, res) => {
 
     if (reconcileEgressId) {
       try {
-        const reconciled = await reconcileRecordingByEgressId(reconcileEgressId, { maxAttempts: 10, delayMs: 2000, markFailed: true });
+        const reconciled = await reconcileRecordingByEgressId(reconcileEgressId, { maxAttempts: 15, delayMs: 2000, markFailed: true });
         if (reconciled?.status === 'completed') {
           session.recordingStatus = 'available';
           session.recordingUrl = reconciled.url || session.recordingUrl;
@@ -356,6 +417,13 @@ router.post('/:id/end', protect, authorize('trainer'), async (req, res) => {
           session.egressId = '';
           await session.save();
         }
+        try {
+          const { emitToSession } = require('../services/socketService');
+          emitToSession(session._id.toString(), 'recording:status', {
+            sessionId: session._id,
+            status: session.recordingStatus,
+          });
+        } catch (_) {}
       } catch (_) {}
     }
 
@@ -483,6 +551,13 @@ router.post('/:id/join', protect, async (req, res) => {
       // Non-blocking: allow join even if attendance fails
     }
 
+    try {
+      emitWorkshopAttendanceUpdate(session._id, {
+        studentId: req.user._id,
+        attendanceStatus: 'Present',
+      });
+    } catch (_) {}
+
     return res.json({ success: true, token, url: LIVEKIT_URL, roomName, role: isHost ? 'trainer' : 'student' });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -562,16 +637,54 @@ router.post('/:id/attendance/mark', protect, authorize('admin', 'trainer'), asyn
     if (!participantId || !status)
       return res.status(400).json({ success: false, message: 'participantId and status are required' });
 
+    const validStatuses = ['Present', 'Absent', 'Late', 'Partial'];
+    if (!validStatuses.includes(status))
+      return res.status(400).json({ success: false, message: `status must be one of: ${validStatuses.join(', ')}` });
+
+    // participantId must resolve to a User account (trainee dashboard keys by userId)
+    let studentId = null;
+    if (isValidId(participantId)) {
+      const reg = await WorkshopPublicRegistration.findOne({
+        $or: [{ _id: participantId }, { userId: participantId }],
+      }).select('userId registrationStatus').lean();
+      if (reg?.userId) {
+        studentId = reg.userId;
+      } else {
+        const user = await User.findById(participantId).select('_id role').lean();
+        if (user?.role === 'trainee') studentId = user._id;
+      }
+    }
+    if (!studentId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Participant must have a linked user account to record attendance',
+      });
+    }
+
+    const batch = await WorkshopBatch.findById(session.workshopBatchId).select('registrationIds students workshopId').lean();
+    if (batch) {
+      const uid = studentId.toString();
+      const inStudents = (batch.students || []).some(s => s.toString() === uid);
+      const inRegs = await WorkshopPublicRegistration.countDocuments({
+        _id: { $in: batch.registrationIds || [] },
+        userId: studentId,
+        registrationStatus: 'Approved',
+      });
+      if (!inStudents && !inRegs)
+        return res.status(400).json({ success: false, message: 'Participant is not in this workshop batch' });
+    }
+
     const scheduledDurationMin = session.durationMinutes || 60;
     const mins = Number(attendedMinutes) || 0;
     const pct  = scheduledDurationMin > 0 ? Math.min(100, Math.round((mins / scheduledDurationMin) * 100)) : 0;
 
     const record = await WorkshopAttendance.findOneAndUpdate(
-      { sessionId: session._id, studentId: participantId },
+      { sessionId: session._id, studentId },
       {
         sessionId:        session._id,
         workshopBatchId:  session.workshopBatchId,
-        studentId:        participantId,
+        workshopId:       batch?.workshopId || undefined,
+        studentId,
         attendanceStatus: status,
         joinTime:         joinTime  ? new Date(joinTime)  : undefined,
         leaveTime:        leaveTime ? new Date(leaveTime) : undefined,
@@ -587,12 +700,18 @@ router.post('/:id/attendance/mark', protect, authorize('admin', 'trainer'), asyn
       const batchDoc = await WorkshopBatch.findById(session.workshopBatchId).select('workshopId').lean();
       if (batchDoc?.workshopId) {
         await WorkshopCertificate.findOneAndUpdate(
-          { workshopId: batchDoc.workshopId, studentId: participantId },
-          { workshopId: batchDoc.workshopId, studentId: participantId, status: 'Eligible' },
+          { workshopId: batchDoc.workshopId, studentId },
+          { workshopId: batchDoc.workshopId, studentId, status: 'Eligible' },
           { upsert: true, setDefaultsOnInsert: true }
         );
       }
     }
+
+    emitWorkshopAttendanceUpdate(session._id, {
+      studentId,
+      attendanceStatus: record?.attendanceStatus,
+      attendancePct: pct,
+    });
 
     return res.json({ success: true, record });
   } catch (err) {
@@ -679,6 +798,10 @@ router.post('/:id/recording/start', protect, authorize('trainer'), async (req, r
 
     if (session.trainerId.toString() !== req.user._id.toString())
       return res.status(403).json({ success: false, message: 'Forbidden' });
+
+    if (session.status !== 'live') {
+      return res.status(409).json({ success: false, message: 'Session must be live before starting a recording. Click Go Live first.' });
+    }
 
     if (session.recordingStatus === 'recording') {
       return res.status(409).json({ success: false, message: 'Recording is already in progress' });
@@ -802,42 +925,51 @@ router.post('/:id/recording/stop', protect, authorize('trainer'), async (req, re
 
     const stoppedEgressId = session.egressId;
 
-    // Reconcile in background — do not block the stop response (UI must update immediately)
-    setImmediate(async () => {
-      try {
-        const reconciled = await reconcileRecordingByEgressId(stoppedEgressId, { maxAttempts: 15, delayMs: 2000, markFailed: true });
-        const freshSession = await Session.findById(session._id);
-        if (!freshSession) return;
-        if (reconciled?.status === 'completed') {
+    // Await reconcile (same as LMS) so recording finalizes before response when possible
+    let finalRecordingStatus = 'processing';
+    try {
+      const reconciled = await reconcileRecordingByEgressId(stoppedEgressId, { maxAttempts: 15, delayMs: 2000, markFailed: true });
+      if (reconciled) recordingDoc = reconciled;
+      const freshSession = await Session.findById(session._id);
+      if (freshSession) {
+        if (recordingDoc?.status === 'completed') {
           freshSession.recordingStatus = 'available';
-          freshSession.recordingUrl = reconciled.url || freshSession.recordingUrl;
+          freshSession.recordingUrl = recordingDoc.url || freshSession.recordingUrl;
           freshSession.egressId = '';
-          await freshSession.save();
-        } else if (reconciled?.status === 'failed') {
-          freshSession.recordingStatus = 'none';
+          finalRecordingStatus = 'available';
+        } else if (recordingDoc?.status === 'failed') {
+          freshSession.recordingStatus = 'failed';
           freshSession.egressId = '';
-          await freshSession.save();
+          finalRecordingStatus = 'failed';
+        } else if (recordingDoc?.status === 'processing') {
+          freshSession.recordingStatus = 'processing';
+          finalRecordingStatus = 'processing';
         }
-        const finalStatus = reconciled?.status === 'completed' ? 'available'
-          : reconciled?.status === 'failed' ? 'failed' : 'processing';
-        const { emitToSession } = require('../services/socketService');
-        emitToSession(session._id.toString(), 'recording:status', {
-          sessionId: session._id,
-          recordingId: reconciled?._id,
-          status: finalStatus,
-          endedAt,
-          durationSeconds,
-        });
-      } catch (recErr) {
-        console.warn('Workshop recording reconcile:', recErr.message);
+        await freshSession.save();
       }
-    });
+    } catch (recErr) {
+      console.warn('Workshop recording reconcile:', recErr.message);
+    }
+
+    try {
+      emitToSession(session._id.toString(), 'recording:status', {
+        sessionId: session._id,
+        recordingId: recordingDoc?._id,
+        status: finalRecordingStatus,
+        endedAt,
+        durationSeconds,
+      });
+    } catch (_) {}
 
     return res.json({
       success: true,
-      message: 'Recording stopped and processing',
+      message: finalRecordingStatus === 'available'
+        ? 'Recording stopped and saved'
+        : finalRecordingStatus === 'failed'
+          ? 'Recording stopped but processing failed'
+          : 'Recording stopped and processing',
       recording: recordingDoc,
-      recordingStatus: 'processing',
+      recordingStatus: finalRecordingStatus,
       durationSeconds,
     });
   } catch (err) {
@@ -895,6 +1027,12 @@ router.post('/:id/leave', protect, async (req, res) => {
         );
       }
     }
+
+    emitWorkshopAttendanceUpdate(session._id, {
+      studentId: req.user._id,
+      attendanceStatus: updated?.attendanceStatus,
+      attendancePct: pct,
+    });
 
     return res.json({ success: true, record: updated, completionEligible, attendancePct: pct });
   } catch (err) {

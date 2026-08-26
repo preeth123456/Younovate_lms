@@ -134,6 +134,7 @@ export default function TraineeSessions() {
   const wsLiveConn   = useSelector(selectTraineeLiveConnection);
   const wsJoinStatus = useSelector(selectWsJoinStatus);
   const wsJoinError  = useSelector(selectWsJoinError);
+  const authToken    = useSelector(s => s.auth?.token || '');
 
   const load = useCallback(() => {
     dispatch(fetchMyLmsSessions());
@@ -179,11 +180,27 @@ export default function TraineeSessions() {
   // Live room views
   if (active) return <TraineeLiveSession session={active.session} connection={active.connection} onLeave={handleLmsLeave} />;
   if (wsLiveConn?.token && wsLiveConn?.url) {
-    return <LiveRoom token={wsLiveConn.token} serverUrl={wsLiveConn.url} canPublish={true} title="Live Workshop Session" identityName="Trainee" onLeave={handleWsLeave} />;
+    return (
+      <LiveRoom
+        token={wsLiveConn.token}
+        serverUrl={wsLiveConn.url}
+        canPublish={true}
+        title="Live Workshop Session"
+        identityName="Trainee"
+        sessionId={wsLiveConn.sessionId}
+        sessionType="WORKSHOP"
+        authToken={authToken}
+        onLeave={handleWsLeave}
+      />
+    );
   }
 
   const liveSessions     = wsSessions.filter(s => s.status === 'live');
-  const upcomingSessions = wsSessions.filter(s => s.status === 'scheduled');
+  const upcomingSessions = wsSessions.filter(s => {
+    if (s.status !== 'scheduled') return false;
+    const endsAt = new Date(s.scheduledAt).getTime() + (s.durationMinutes || 60) * 60000;
+    return Date.now() < endsAt;
+  });
   const pastSessions     = wsSessions.filter(s => s.status === 'completed' || s.status === 'cancelled');
 
   return (

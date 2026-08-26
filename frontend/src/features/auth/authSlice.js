@@ -80,10 +80,9 @@ export const login = createAsyncThunk(
       });
       // data = { success, accessToken, user, role }
 
-      // [FIX 1] persist the correct field (accessToken, not token).
-      // Only persist when "remember" is set; otherwise the token lives in
-      // Redux memory for the session and is gone on refresh (by design).
+      // Only persist when "remember" is set; otherwise session uses Redux + refresh cookie.
       if (remember) persistToken(data.accessToken);
+      else clearToken();
 
       return data;
     } catch (err) {

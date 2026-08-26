@@ -38,7 +38,7 @@ const sessionSchema = new mongoose.Schema({
   joinBeforeMinutes: { type: Number, default: 10, min: 0 },                // how early people may join
   autoEnd:           { type: Boolean, default: true },                     // auto-complete when timer runs out
 
-  status: { type: String, enum: ['scheduled', 'live', 'completed', 'cancelled'], default: 'scheduled', index: true },
+  status: { type: String, enum: ['scheduled', 'live', 'completed', 'cancelled', 'awaiting_confirmation'], default: 'scheduled', index: true },
 
   // ── LiveKit room ────────────────────────────────────
   roomName:  { type: String, default: '', index: true },

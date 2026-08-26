@@ -16,6 +16,7 @@ const sessionCtrl = require('../controllers/sessionController');
 
 const { resolveRecordingPlayback, reconcileRecordingByEgressId, defaultRecordingStorage } = require('../utils/recordingStorage');
 const { rejectPastDateTime } = require('../utils/dateTimeValidation');
+const { applyEffectiveSessionStatus, autoUpdatePastScheduledSessions } = require('../utils/sessionStatusUtils');
 
 const router = express.Router();
 router.use(protect, authorize('trainer'));
@@ -120,11 +121,16 @@ router.get('/sessions', async (req, res) => {
     const { status } = req.query;
     const filter = { trainerId: req.user._id, ...LMS_FILTER };
     if (status) filter.status = status;
+
+    await autoUpdatePastScheduledSessions(Session, { trainerId: req.user._id, ...LMS_FILTER });
+
     const sessions = await Session.find(filter)
       .populate('batchId', 'name')
       .sort('-scheduledAt')
-      .limit(50);
-    return res.json({ success: true, sessions });
+      .limit(50)
+      .lean();
+    const enriched = sessions.map((s) => applyEffectiveSessionStatus(s));
+    return res.json({ success: true, sessions: enriched });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -137,7 +143,34 @@ router.get('/sessions/:id', async (req, res) => {
       .populate('batchId', 'name')
       .populate('trainerId', 'name email profilePicture');
     if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
-    return res.json({ success: true, session });
+
+    if (session.recordingStatus === 'processing') {
+      let egressId = session.egressId;
+      if (!egressId) {
+        const latest = await Recording.findOne({ sessionId: session._id }).sort({ createdAt: -1 }).lean();
+        egressId = latest?.egressId;
+      }
+      if (egressId) {
+        try {
+          const reconciled = await reconcileRecordingByEgressId(egressId, { maxAttempts: 3, delayMs: 1500, markFailed: true });
+          if (reconciled?.status === 'completed') {
+            session.recordingStatus = 'available';
+            session.recordingUrl = reconciled.url || session.recordingUrl;
+            session.egressId = '';
+            await session.save();
+          } else if (reconciled?.status === 'failed') {
+            session.recordingStatus = 'failed';
+            session.egressId = '';
+            await session.save();
+          }
+        } catch (_) {}
+      } else if (session.recordingUrl) {
+        session.recordingStatus = 'available';
+        await session.save();
+      }
+    }
+
+    return res.json({ success: true, session: applyEffectiveSessionStatus(session) });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -278,7 +311,7 @@ router.get('/students', async (req, res) => {
   try {
     const trainerId = req.user._id;
 
-    const [workshopBatches, lmsSessions, lmsBatches] = await Promise.all([
+    const [workshopBatches, lmsSessions, trainerBatchIds] = await Promise.all([
       WorkshopBatch.find({ trainerId })
         .populate('students', 'name email phone profilePicture batchIds')
         .populate('workshopId', 'title')
@@ -289,12 +322,14 @@ router.get('/students', async (req, res) => {
         .populate('trainees', 'name email phone profilePicture batchIds')
         .lean(),
 
-      Session.find({ trainerId, ...LMS_FILTER })
-        .distinct('batchId')
-        .lean(),
+      Batch.find({ trainerId }).distinct('_id'),
     ]);
 
-    const batchIds = lmsBatches.filter(Boolean).map(b => b.batchId || b);
+    const sessionBatchIds = await Session.find({ trainerId, ...LMS_FILTER }).distinct('batchId');
+    const batchIds = [...new Set([
+      ...trainerBatchIds.map(String),
+      ...sessionBatchIds.filter(Boolean).map(b => b.toString()),
+    ])];
 
     const batchTrainees = batchIds.length > 0
       ? await User.find({ role: 'trainee', isActive: true, batchIds: { $in: batchIds } })
@@ -507,6 +542,9 @@ const stopRecordingSession = async (req, res) => {
         session.recordingStatus = 'failed';
         session.egressId = '';
         await session.save();
+      } else if (!recordingDoc || recordingDoc.status === 'processing') {
+        session.recordingStatus = 'processing';
+        await session.save();
       }
     } catch (recErr) {
       console.warn('LMS recording reconcile:', recErr.message);
@@ -521,6 +559,8 @@ const stopRecordingSession = async (req, res) => {
           : 'Recording stopped and processing',
       session,
       recording: recordingDoc,
+      recordingStatus: session.recordingStatus,
+      durationSeconds: recordingDoc?.durationSeconds || 0,
     });
   } catch (err) {
     console.error('stopRecordingSession error:', err);
@@ -545,7 +585,7 @@ router.get('/recordings', async (req, res) => {
       (r) => r.egressId && ['processing', 'active'].includes(r.status)
     );
     for (const r of stuck.slice(0, 8)) {
-      try { await reconcileRecordingByEgressId(r.egressId, { maxAttempts: 2, delayMs: 500 }); } catch (_) {}
+      try { await reconcileRecordingByEgressId(r.egressId, { maxAttempts: 3, delayMs: 1000, markFailed: true }); } catch (_) {}
     }
 
     const fresh = stuck.length
@@ -582,7 +622,7 @@ router.get('/recordings/:id', async (req, res) => {
 
     if (recording.egressId && ['processing', 'active'].includes(recording.status)) {
       try {
-        const reconciled = await reconcileRecordingByEgressId(recording.egressId, { maxAttempts: 5, delayMs: 1000 });
+        const reconciled = await reconcileRecordingByEgressId(recording.egressId, { maxAttempts: 8, delayMs: 1500, markFailed: true });
         if (reconciled) recording = reconciled;
       } catch (_) {}
     }

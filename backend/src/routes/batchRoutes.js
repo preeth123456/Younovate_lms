@@ -4,6 +4,7 @@ const Batch   = require('../models/Batch');
 const User    = require('../models/User');
 const { protect, authorize } = require('../middleware/auth');
 const { rejectPastDate } = require('../utils/dateTimeValidation');
+const { applyEffectiveBatchStatus } = require('../utils/batchStatusUtils');
 
 const router = express.Router();
 router.use(protect);
@@ -40,7 +41,8 @@ router.get('/', async (req, res) => {
     }
     // limit = 0  →  mongoose returns everything (no .limit() call)
 
-    const batches = await query;
+    const batchesRaw = await query;
+    const batches = batchesRaw.map((b) => applyEffectiveBatchStatus(b));
 
     return res.json({
       success: true,
@@ -66,10 +68,10 @@ router.get('/:id', async (req, res) => {
       .populate('trainerId', 'name email');
     if (!batch) return res.status(404).json({ success: false, message: 'Batch not found' });
 
-    const students = await User.find({ batchId: batch._id, role: 'trainee' })
+    const students = await User.find({ role: 'trainee', batchIds: batch._id })
       .select('name email placementStatus');
 
-    return res.json({ success: true, data: { batch, students } });
+    return res.json({ success: true, data: { batch: applyEffectiveBatchStatus(batch), students } });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }

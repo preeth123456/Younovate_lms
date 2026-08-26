@@ -9,7 +9,7 @@ const batchSchema = new mongoose.Schema({
   startDate:   { type: Date, required: true },
   endDate:     { type: Date },
   maxStudents: { type: Number, default: 30, min: 1 },
-  status:      { type: String, enum: ['upcoming', 'active', 'completed'], default: 'upcoming' },
+  status:      { type: String, enum: ['upcoming', 'active', 'completed', 'cancelled'], default: 'upcoming' },
   course:      { type: String, default: '' },
   tags:        [{ type: String }],
 }, {

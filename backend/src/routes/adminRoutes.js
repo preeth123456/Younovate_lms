@@ -14,6 +14,7 @@ const LmsFeedback  = require('../models/LmsFeedback');
 const { protect, authorize } = require('../middleware/auth');
 const { resolveRecordingPlayback } = require('../utils/recordingStorage');
 const { rejectPastDate } = require('../utils/dateTimeValidation');
+const { applyEffectiveBatchStatus } = require('../utils/batchStatusUtils');
 const mongoose = require('mongoose');
 
 const router = express.Router();
@@ -276,7 +277,8 @@ router.get('/batches', async (req, res) => {
   if (status) filter.status = status;
   const skip    = (Number(page) - 1) * Number(limit);
   const total   = await Batch.countDocuments(filter);
-  const batches = await Batch.find(filter).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)).populate('trainerId', 'name email');
+  const batchesRaw = await Batch.find(filter).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)).populate('trainerId', 'name email');
+  const batches = batchesRaw.map((b) => applyEffectiveBatchStatus(b));
   return res.json({ success: true, data: { batches, meta: { total, page: Number(page), limit: Number(limit), pages: Math.ceil(total / Number(limit)) } } });
 });
 

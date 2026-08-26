@@ -34,6 +34,11 @@ import {
   selectGradingModal,
 } from '../../features/Trainer/trainerSlice';
 
+import {
+  fetchSessionAttendanceWS,
+  selectWSAttendance,
+} from '../../features/workshops/workshopSessionsSlice';
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -60,19 +65,24 @@ const fmtDate = (iso) =>
 
 const scoreCol = (n) => n >= 75 ? '#16a34a' : n >= 55 ? '#d97706' : '#dc2626';
 
-const isPastSession = (s, isLive = false) => {
-  if (isLive || s.status === 'live' || s.status === 'ongoing') {
-    const scheduledMs = new Date(s.scheduledAt || s.date || s.startTime || 0).getTime();
-    const durationMin = s.durationMinutes || 60;
-    const endsAtMs = scheduledMs + durationMin * 60000;
-    if (!isNaN(endsAtMs) && Date.now() > endsAtMs) return true;
-    return false;
-  }
-  if (s.status === 'completed' || s.status === 'cancelled' || s.status === 'ended') return true;
-  const t = s.scheduledAt || s.date || s.startTime;
-  if (!t) return false;
-  const ms = new Date(t).getTime();
-  return !isNaN(ms) && ms < Date.now();
+const sessionStartMs = (s) => {
+  const ms = new Date(s.scheduledAt || s.date || s.startTime || 0).getTime();
+  return Number.isNaN(ms) ? 0 : ms;
+};
+
+/** Match backend sessionStatusUtils — live once scheduled start time is reached. */
+const effectiveSessionStatus = (s) => {
+  const status = s.status;
+  if (['completed', 'cancelled'].includes(status)) return status;
+  if (status === 'live' || status === 'ongoing') return 'live';
+  const start = sessionStartMs(s);
+  if (start && Date.now() >= start) return 'live';
+  return 'scheduled';
+};
+
+const isPastSession = (s) => {
+  const st = effectiveSessionStatus(s);
+  return st === 'completed' || st === 'cancelled';
 };
 
 const clampPct = (n) => Math.min(100, Math.max(0, Math.round(Number(n) || 0)));
@@ -147,6 +157,12 @@ const CSS = `
   .lk-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; background: #111827; color: #fff; flex-shrink: 0; }
   .lk-stage { flex: 1; min-height: 0; }
   .lk-leave { background: #dc2626; color: #fff; border: none; padding: 8px 16px; border-radius: 8px; font-size: 0.82rem; font-weight: 700; cursor: pointer; }
+  .lk-overlay .lk-chat, .lk-overlay .lk-chat-entry, .lk-overlay .lk-message-body, .lk-overlay .lk-chat-form {
+    background: #fff !important; color: #111827 !important; color-scheme: light !important;
+  }
+  .lk-overlay .lk-chat-form input, .lk-overlay .lk-chat-form textarea {
+    background: #fff !important; color: #111827 !important;
+  }
 
   @media (max-width: 1024px) { .td-g3 { grid-template-columns: 1fr 1fr !important; } }
   @media (max-width:  680px) { .td-g3 { grid-template-columns: 1fr       !important; } }
@@ -259,6 +275,20 @@ const LiveRoom = ({ session, isHost = false, onClose, onEndSession, initialToken
       .catch(() => {});
   }, [session._id, authToken]);
 
+  // Clear processing badge once backend finishes reconciling
+  useEffect(() => {
+    if (recordingState !== 'processing' || !session._id || !authToken) return undefined;
+    const poll = setInterval(() => {
+      axios.get(`${API_BASE_URL}/api/trainer/sessions/${session._id}`, { headers: { Authorization: `Bearer ${authToken}` } })
+        .then(res => {
+          const recStatus = res.data?.session?.recordingStatus;
+          if (recStatus === 'available' || recStatus === 'failed') setRecordingState('none');
+        })
+        .catch(() => {});
+    }, 3000);
+    return () => clearInterval(poll);
+  }, [recordingState, session._id, authToken]);
+
   const toggleRecording = async () => {
     if (!session._id || recordingLoading) return;
     setRecordingError('');
@@ -268,8 +298,13 @@ const LiveRoom = ({ session, isHost = false, onClose, onEndSession, initialToken
         const res = await axios.post(`${API_BASE_URL}/api/trainer/sessions/${session._id}/recording/stop`, {}, {
           headers: { Authorization: `Bearer ${authToken}` },
         });
-        if (res.data?.success) setRecordingState('processing');
-        else setRecordingError(res.data?.message || 'Failed to stop recording');
+        if (res.data?.success) {
+          const status = res.data.recordingStatus || res.data.session?.recordingStatus;
+          const rec = res.data.recording;
+          if (status === 'available' || rec?.status === 'completed') setRecordingState('none');
+          else if (status === 'failed') setRecordingState('none');
+          else setRecordingState('processing');
+        } else setRecordingError(res.data?.message || 'Failed to stop recording');
       } else if (recordingState === 'none') {
         const res = await axios.post(`${API_BASE_URL}/api/trainer/sessions/${session._id}/recording/start`, {}, {
           headers: { Authorization: `Bearer ${authToken}` },
@@ -451,8 +486,11 @@ const SessionCard = ({ session, isLive }) => {
   const attLoading = allAttSt[session._id] === 'loading';
 
   const records   = att?.records || att?.data?.records || [];
-  const past      = isPastSession(session, isLive);
-  const completed = session.status === 'completed';
+  const st        = effectiveSessionStatus(session);
+  const liveNow   = isLive || st === 'live';
+  const past      = isPastSession(session);
+  const completed = st === 'completed';
+  const cancelled = st === 'cancelled';
 
   const authCfg = authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : undefined;
 
@@ -462,24 +500,15 @@ const SessionCard = ({ session, isLive }) => {
     setActErr(null);
     try {
       const { data } = await axios.post(`${API_BASE_URL}/api/sessions/${session._id}/start`, {}, authCfg);
+      if (data?.token) {
+        setLiveConn({ token: data.token, url: data.url });
+        setLive(true);
+      }
       dispatch(fetchTrainerSessions());
-      if (data?.token) setLiveConn({ token: data.token, url: data.url });
-      setLive(true);
     } catch (e) {
       setActErr(e?.response?.data?.message || e.message || 'Could not start the session.');
     } finally {
       setStarting(false);
-    }
-  };
-
-  const handleJoinLive = async () => {
-    setActErr(null);
-    try {
-      const { data } = await axios.post(`${API_BASE_URL}/api/sessions/${session._id}/join`, {}, authCfg);
-      if (data?.token) setLiveConn({ token: data.token, url: data.url });
-      setLive(true);
-    } catch (e) {
-      setActErr(e?.response?.data?.message || e.message || 'Could not join the live session.');
     }
   };
 
@@ -508,8 +537,8 @@ const SessionCard = ({ session, isLive }) => {
 
   return (
     <div className="td-card" style={{
-      border: `1px solid ${isLive ? '#fca5a5' : '#e5e7eb'}`,
-      background: isLive ? '#fef2f2' : past ? '#f9fafb' : '#fff',
+      border: `1px solid ${liveNow ? '#fca5a5' : '#e5e7eb'}`,
+      background: liveNow ? '#fef2f2' : past ? '#f9fafb' : '#fff',
       borderRadius: 10, padding: '14px 16px', marginBottom: 10,
       transition: 'box-shadow .15s', opacity: past ? 0.92 : 1,
     }}>
@@ -517,25 +546,26 @@ const SessionCard = ({ session, isLive }) => {
         <span style={{ fontWeight: 600, fontSize: '0.93rem', color: '#111827' }}>
           {session.title || 'Untitled Session'}
         </span>
-        {past && <Pill bg="#f1f5f9" color="#64748b">🔒 Read-only</Pill>}
+        {past && (completed || cancelled) && <Pill bg="#f1f5f9" color="#64748b">🔒 Read-only</Pill>}
       </div>
 
       <div style={{ fontSize: '0.78rem', color: '#6b7280', marginBottom: 10 }}>{meta}</div>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        {isLive ? (
+        {liveNow ? (
           <button
-            onClick={handleJoinLive}
-            style={{ background: '#dc2626', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: 7, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+            onClick={handleStart}
+            disabled={starting}
+            style={{ background: '#dc2626', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: 7, fontSize: '0.78rem', fontWeight: 600, cursor: starting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#fff', animation: 'pulse 1s infinite' }} />
-            Join Live
+            {starting ? 'Joining…' : 'Join Live'}
           </button>
         ) : past ? (
           <>
-            <span style={{ background: '#f1f5f9', color: '#64748b', border: '1px solid #e5e7eb', padding: '6px 14px', borderRadius: 7, fontSize: '0.78rem', fontWeight: 600 }}>
-              {completed ? 'Completed' : 'Ended'}
+            <span style={{ background: '#f1f5f9', color: completed ? '#15803d' : '#b91c1c', border: '1px solid #e5e7eb', padding: '6px 14px', borderRadius: 7, fontSize: '0.78rem', fontWeight: 600 }}>
+              {completed ? 'Completed' : 'Cancelled'}
             </span>
-            {session.recordingUrl && (
+            {completed && session.recordingUrl && (
               <a
                 href={session.recordingUrl} target="_blank" rel="noreferrer"
                 style={{ background: '#1e293b', color: '#fff', textDecoration: 'none', padding: '6px 14px', borderRadius: 7, fontSize: '0.78rem', fontWeight: 600 }}>
@@ -543,13 +573,6 @@ const SessionCard = ({ session, isLive }) => {
               </a>
             )}
           </>
-        ) : session.status === 'scheduled' ? (
-          <button
-            onClick={handleStart}
-            disabled={starting}
-            style={{ background: starting ? '#475569' : '#1e293b', color: '#fff', border: 'none', padding: '7px 18px', borderRadius: 7, fontSize: '0.78rem', fontWeight: 600, cursor: starting ? 'wait' : 'pointer' }}>
-            {starting ? 'Starting…' : 'Start Session'}
-          </button>
         ) : (
           <button style={{ background: '#fff', color: '#6b7280', border: '1px solid #e5e7eb', padding: '6px 14px', borderRadius: 7, fontSize: '0.78rem', fontWeight: 500, cursor: 'default' }}>
             Upcoming
@@ -606,6 +629,80 @@ const SessionCard = ({ session, isLive }) => {
           onClose={() => { setLive(false); setLiveConn(null); }}
           onEndSession={handleEnd}
         />
+      )}
+    </div>
+  );
+};
+
+// Workshop session card — attendance toggle mirrors LMS SessionCard
+const WorkshopSessionCard = ({ session }) => {
+  const dispatch = useDispatch();
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [fetched, setFetched] = useState(false);
+
+  const records = useSelector(selectWSAttendance(session._id));
+
+  const toggleAttendance = async () => {
+    if (!open && !fetched) {
+      setLoading(true);
+      await dispatch(fetchSessionAttendanceWS(session._id));
+      setFetched(true);
+      setLoading(false);
+    }
+    setOpen(v => !v);
+  };
+
+  const isPresent = (status) => ['Present', 'Partial', 'present', 'partial'].includes(status);
+
+  return (
+    <div className="td-card" style={{
+      border: `1px solid ${session.status === 'live' ? '#fca5a5' : '#e5e7eb'}`,
+      background: session.status === 'live' ? '#fef2f2' : '#fff',
+      borderRadius: 10, padding: '14px 16px', marginBottom: 10,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+        <span style={{ fontWeight: 600, fontSize: '0.93rem', color: '#111827' }}>
+          {session.title || 'Workshop Session'}
+        </span>
+        {session.status === 'live' && <Pill bg="#fee2e2" color="#dc2626" dot>LIVE</Pill>}
+      </div>
+      <div style={{ fontSize: '0.78rem', color: '#6b7280', marginBottom: 10 }}>
+        {session.workshopBatchId?.workshopId?.title || session.workshopBatchId?.batchName || ''} · {fmtTime(session.scheduledAt)}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button
+          onClick={toggleAttendance}
+          style={{ background: '#fff', color: '#6366f1', border: '1px solid #e0e7ff', padding: '6px 12px', borderRadius: 7, fontSize: '0.73rem', fontWeight: 600, cursor: 'pointer' }}
+        >
+          {open ? 'Hide' : 'View Attendance'}
+        </button>
+      </div>
+      {open && (
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f1f5f9' }}>
+          {loading ? (
+            <Spinner pad={16} />
+          ) : records.length === 0 ? (
+            <p style={{ fontSize: '0.74rem', color: '#9ca3af' }}>No attendance records for this session.</p>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {records.map((r, i) => {
+                const present = isPresent(r.attendanceStatus || r.status);
+                const name = r.participant?.name || r.participant?.fullName || r.studentId?.name || `Participant ${i + 1}`;
+                return (
+                  <span key={r._id || i} style={{
+                    fontSize: '0.71rem', fontWeight: 600,
+                    padding: '3px 9px', borderRadius: 6,
+                    background: present ? '#dcfce7' : '#fee2e2',
+                    color: present ? '#15803d' : '#b91c1c',
+                  }}>
+                    {name} {present ? '✓' : '✗'}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -927,22 +1024,7 @@ const OverviewTab = ({ dashboard, students }) => {
           {workshopSessions.length === 0 && workshopLiveSessions.length === 0
             ? <Empty icon="📅" msg="No workshop sessions scheduled" />
             : [...workshopLiveSessions, ...workshopSessions].slice(0, 5).map(s => (
-                <div key={s._id} className="td-card" style={{
-                  border: '1px solid #e5e7eb', borderRadius: 10, padding: '14px 16px', marginBottom: 10,
-                  background: s.status === 'live' ? '#fef2f2' : '#fff',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 600, fontSize: '0.93rem', color: '#111827' }}>
-                      {s.title || 'Workshop Session'}
-                    </span>
-                    {s.status === 'live' && (
-                      <Pill bg="#fee2e2" color="#dc2626" dot>LIVE</Pill>
-                    )}
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>
-                    {s.workshopBatchId?.workshopId?.title || s.workshopBatchId?.batchName || ''} · {fmtTime(s.scheduledAt)}
-                  </div>
-                </div>
+                <WorkshopSessionCard key={s._id} session={s} />
               ))
           }
         </div>
@@ -1011,18 +1093,21 @@ const SessionsTab = () => {
 
   useEffect(() => { dispatch(fetchTrainerSessions()); }, [dispatch]);
 
-  if (status === 'loading') return <Spinner />;
+  if (status === 'loading' && !sessions.length) return <Spinner />;
   if (!sessions.length)     return <Empty icon="📅" msg="No sessions found" />;
 
-  const live = sessions.filter(s => s.status === 'live' || s.status === 'ongoing');
-  const upcoming = sessions.filter(s => (s.status === 'scheduled' || s.status === 'upcoming') && !isPastSession(s));
-  const pastList = sessions.filter(s => !live.includes(s) && !upcoming.includes(s));
+  const live = sessions.filter(s => effectiveSessionStatus(s) === 'live');
+  const upcoming = sessions.filter(s => effectiveSessionStatus(s) === 'scheduled');
+  const pastList = sessions.filter(s => {
+    const st = effectiveSessionStatus(s);
+    return st === 'completed' || st === 'cancelled';
+  });
 
   return (
     <div>
-      {live.length     > 0 && <><GrpLbl>🔴 Live Now</GrpLbl> {live.map(s     => <SessionCard key={s._id} session={s} isLive />)}</>}
+      {live.length     > 0 && <><GrpLbl>🔴 Live Now</GrpLbl> {live.map(s     => <SessionCard key={s._id} session={s} isLive={true} />)}</>}
       {upcoming.length > 0 && <><GrpLbl>Upcoming</GrpLbl>     {upcoming.map(s => <SessionCard key={s._id} session={s} isLive={false} />)}</>}
-      {pastList.length > 0 && <><GrpLbl>Past · Read-only</GrpLbl> {pastList.map(s => <SessionCard key={s._id} session={s} isLive={false} />)}</>}
+      {pastList.length > 0 && <><GrpLbl>Past Sessions</GrpLbl> {pastList.map(s => <SessionCard key={s._id} session={s} isLive={false} />)}</>}
     </div>
   );
 };

@@ -29,8 +29,13 @@ function buildRecordingUrl(relPath) {
   return `${BASE_RECORDING_URL}/recordings/${relPath}`;
 }
 
-// ── S3 / cloud storage (LiveKit Cloud egress) ─────────────────────────────
+// ── S3 / cloud storage (opt-in via USE_S3_RECORDING=true) ───────────────────
+function useS3Recording() {
+  return process.env.USE_S3_RECORDING === 'true';
+}
+
 function getS3Config() {
+  if (!useS3Recording()) return null;
   const bucket = process.env.S3_BUCKET || process.env.AWS_S3_BUCKET;
   const region = process.env.S3_REGION || process.env.AWS_REGION;
   const endpoint = process.env.S3_ENDPOINT || '';
@@ -40,6 +45,7 @@ function getS3Config() {
 }
 
 function isS3Configured() {
+  if (!useS3Recording()) return false;
   const s3 = getS3Config();
   const accessKey = process.env.S3_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID;
   const secretKey = process.env.S3_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
@@ -380,6 +386,15 @@ function readEgressMediaDuration(egressId, roomName) {
   return 0;
 }
 
+function localFileIsPlayable(relPath) {
+  if (!relPath || !fileExistsForRelPath(relPath)) return false;
+  const filePath = path.join(RECORDINGS_DIR, relPath);
+  const size = fs.statSync(filePath).size;
+  if (size < 1024) return false;
+  try { ensureMp4WebPlayable(filePath); } catch (_) {}
+  return true;
+}
+
 function resolveRecordingPlayback(recording) {
   const kind = recordingStorageKind(recording);
 
@@ -398,7 +413,7 @@ function resolveRecordingPlayback(recording) {
   const relPath = resolveRelPath(recording);
   if (relPath) ensureFileOnHost(relPath);
   const url = relPath ? buildRecordingUrl(relPath) : (recording.url || '');
-  const playable = relPath ? isMp4WebPlayable(relPath) : false;
+  const playable = relPath ? localFileIsPlayable(relPath) : false;
   return { url, playable, relPath };
 }
 
@@ -453,9 +468,10 @@ async function finalizeRecordingOnDisk(recording, relPath, sizeBytes) {
   const Session   = require('../models/Session');
 
   const filePath = path.join(RECORDINGS_DIR, relPath);
-  if (!ensureMp4WebPlayable(filePath)) {
+  if (!fileExistsForRelPath(relPath)) {
     return null;
   }
+  try { ensureMp4WebPlayable(filePath); } catch (_) {}
 
   const url     = buildRecordingUrl(relPath);
   const endedAt = recording.endedAt || new Date();
@@ -551,6 +567,13 @@ async function reconcileRecordingByEgressId(egressId, { maxAttempts = 1, delayMs
     if (hintedRelPath && ensureFileOnHost(hintedRelPath)) {
       const size = fs.statSync(path.join(RECORDINGS_DIR, hintedRelPath)).size;
       return finalizeRecordingOnDisk(recording, hintedRelPath, size);
+    }
+
+    // Fallback: latest MP4 in the room directory (Docker egress writes timestamped files)
+    const latest = findLatestMp4InRoom(recording.roomName);
+    if (latest) {
+      const relPath = `${recording.roomName}/${latest.name}`;
+      return finalizeRecordingOnDisk(recording, relPath, latest.size);
     }
 
     if (isS3Configured()) {

@@ -12,9 +12,10 @@ const {
   LIVEKIT_URL,
 } = require('../services/livekitService');
 
-const { emitToRole, emitToUser } = require('../services/socketService');
+const { emitToRole, emitToUser, emitToSession } = require('../services/socketService');
 const Attendance = require('../models/Attendance');
 const { classifyAttendance, finalizeAttendanceOnEnd } = require('../utils/attendanceUtils');
+const { reconcileRecordingByEgressId } = require('../utils/recordingStorage');
 
 // ════════════════════════════════════════════════════════════════════
 // Basic CRUD (unchanged behaviour, kept for completeness)
@@ -96,13 +97,6 @@ const goLive = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: `Session cannot start before the scheduled time`,
-      });
-    }
-    const sessionEndMs = scheduledMs + (session.durationMinutes || 60) * 60000;
-    if (!isNaN(scheduledMs) && now > sessionEndMs && session.status !== 'live') {
-      return res.status(400).json({
-        success: false,
-        message: `Session has already ended`,
       });
     }
     if (session.status === 'completed') {
@@ -224,13 +218,14 @@ const endSession = async (req, res) => {
     const session = await Session.findOne({ _id: req.params.id, trainerId: req.user._id });
     if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
 
-    try { await stopRecording(session.egressId); } catch (_) { /* webhook still finalises */ }
+    const stoppedEgressId = session.egressId;
 
-    if (session.egressId) {
+    try { await stopRecording(stoppedEgressId); } catch (_) { /* webhook still finalises */ }
+
+    if (stoppedEgressId) {
       try {
-        const Recording = require('../models/Recording');
         const endedAt = new Date();
-        const recording = await Recording.findOne({ egressId: session.egressId }).lean();
+        const recording = await Recording.findOne({ egressId: stoppedEgressId }).lean();
         let durationSeconds = 0;
         if (recording && recording.startedAt) {
           durationSeconds = Math.round((endedAt.getTime() - new Date(recording.startedAt).getTime()) / 1000);
@@ -238,23 +233,41 @@ const endSession = async (req, res) => {
           durationSeconds = Math.round((endedAt.getTime() - new Date(session.startedAt).getTime()) / 1000);
         }
         await Recording.findOneAndUpdate(
-          { egressId: session.egressId },
-          { $set: { endedAt, durationSeconds } },
+          { egressId: stoppedEgressId },
+          { $set: { endedAt, durationSeconds, status: recording?.status === 'completed' ? 'completed' : 'processing' } },
           { new: true }
         );
-        if (recording && recording.status !== 'completed') {
-          await Recording.findOneAndUpdate(
-            { egressId: session.egressId },
-            { $set: { status: 'processing' } }
-          );
-        }
+        if (session.recordingStatus === 'recording') session.recordingStatus = 'processing';
       } catch (_) {}
     }
 
     session.status  = 'completed';
     session.endedAt = new Date();
-    if (session.recordingStatus === 'recording') session.recordingStatus = 'processing';
     await session.save();
+
+    if (stoppedEgressId) {
+      try {
+        const reconciled = await reconcileRecordingByEgressId(stoppedEgressId, { maxAttempts: 15, delayMs: 2000, markFailed: true });
+        if (reconciled?.status === 'completed') {
+          session.recordingStatus = 'available';
+          session.recordingUrl = reconciled.url || session.recordingUrl;
+          session.egressId = '';
+        } else if (reconciled?.status === 'failed') {
+          session.recordingStatus = 'failed';
+          session.egressId = '';
+        }
+        await session.save();
+        try {
+          emitToSession(session._id.toString(), 'recording:status', {
+            sessionId: session._id,
+            status: session.recordingStatus,
+          });
+        } catch (_) {}
+      } catch (recErr) {
+        console.warn('LMS end recording reconcile:', recErr.message);
+      }
+    }
+
     await session.populate('batchId', 'name');
 
     // ── Finalize attendance for trainees still connected ─────────────────────

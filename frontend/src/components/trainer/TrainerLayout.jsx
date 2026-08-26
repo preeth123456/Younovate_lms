@@ -24,6 +24,7 @@ const NAV = [
       { to: '/trainer/workshops',              icon: 'writing',        label: 'My Workshops'       },
       { to: '/trainer/workshop-batches',       icon: 'stack-2',        label: 'My Batches'         },
       { to: '/trainer/workshops/live',         icon: 'video',          label: 'Live Workshop'      },
+      { to: '/trainer/workshops/attendance',  icon: 'clipboard-check', label: 'Attendance'       },
       { to: '/trainer/workshops/participants', icon: 'users',          label: 'Participants'       },
       { to: '/trainer/workshops/resources',    icon: 'books',          label: 'Workshop Resources' },
        { to: '/trainer/workshops/feedback',     icon: 'star',           label: 'Feedback'           },

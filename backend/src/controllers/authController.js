@@ -35,10 +35,20 @@ const register = async (req, res) => {
   if (exists)
     return res.status(409).json({ success: false, message: 'An account with this email already exists' });
 
+  // Public registration is trainee-only. Admin creates trainer/HR/admin accounts.
+  const allowedRoles = ['trainee'];
+  const requestedRole = (role || 'trainee').toLowerCase();
+  if (!allowedRoles.includes(requestedRole)) {
+    return res.status(403).json({
+      success: false,
+      message: 'Public registration is available for trainees only. Contact an administrator to create other accounts.',
+    });
+  }
+
   const sessionToken = generateSessionToken();
   const user = await User.create({
     name, email: email.toLowerCase(), password,
-    role: role || 'trainee', sessionToken, isActive: true,
+    role: 'trainee', sessionToken, isActive: true,
   });
 
   const accessToken  = generateAccessToken(user);

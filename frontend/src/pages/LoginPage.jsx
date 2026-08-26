@@ -59,7 +59,6 @@ export default function LoginPage() {
     if (!form.email)               e.email    = 'Email is required';
     else if (!emailRe.test(form.email)) e.email = 'Enter a valid email address';
     if (!form.password)            e.password = 'Password is required';
-    if (!remember)                 e.remember = 'Please check "Remember Me" to continue';
     return e;
   };
 
@@ -129,28 +128,18 @@ export default function LoginPage() {
               {errors.password && <p className="yn-err"><i className="ti ti-alert-circle" />{errors.password}</p>}
             </div>
 
-            <div className={`yn-field${errors.remember ? ' yn-field-error' : ''}`}>
+            <div className="yn-field">
               <div className="yn-row">
                 <label className="yn-remember">
                   <input type="checkbox" checked={remember}
-                    onChange={e => {
-                      setRemember(e.target.checked);
-                      if (e.target.checked && errors.remember) {
-                        setErrors(prev => ({ ...prev, remember: '' }));
-                      }
-                    }} 
-                    required />
-                  Remember Me *
+                    onChange={e => setRemember(e.target.checked)} />
+                  Remember me
                 </label>
                 <button type="button" className="yn-forgot"
                   onClick={() => navigate('/forgot_password')}>
                   Forgot password?
                 </button>
-              </div>  
-              {errors.remember && <p className="yn-err"><i className="ti ti-alert-circle" />{errors.remember}</p>}
-              {/* <div className="yn-remember-help">
-                {remember ? '✓ Required to proceed with login' : 'You must check this to login'}
-              </div> */}
+              </div>
             </div>
 
             <button type="submit" className="yn-btn-primary" disabled={isLoading}>
@@ -165,7 +154,7 @@ export default function LoginPage() {
           <p className="yn-signup">
             Don&apos;t have an account?{' '}
             <button type="button" className="yn-signup-link"
-              onClick={() => navigate('/register')}>
+              onClick={() => navigate('/signup')}>
               Sign up
             </button>
           </p>

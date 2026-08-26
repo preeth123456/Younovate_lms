@@ -12,11 +12,15 @@ import {
   useChat,
   useParticipants,
   useRoomContext,
+  useLocalParticipant,
+  useConnectionState,
+  StartAudio,
   isTrackReference,
 } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import '@livekit/components-styles';
 import { API_BASE_URL } from '../../config/api';
+import { useSessionSocket } from '../../hooks/useSessionSocket';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 const idOf = (t) => `${t?.participant?.identity ?? ''}:${t?.source ?? ''}`;
@@ -25,6 +29,20 @@ const fmtTimer = (sec) => {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+};
+
+/** Map backend session/recording fields to the UI recording state. */
+const resolveRecordingUiStatus = (sess, stopRecording) => {
+  const status = sess?.recordingStatus;
+  const rec = stopRecording;
+  if (rec?.status === 'completed') return 'available';
+  if (rec?.status === 'failed') return 'failed';
+  if (status === 'processing' && (sess?.recordingUrl || rec?.url)) return 'available';
+  if (status === 'available' || status === 'failed' || status === 'recording' || status === 'processing') {
+    return status;
+  }
+  if (sess?.recordingUrl || rec?.url) return 'available';
+  return status || 'none';
 };
 
 export default function LiveRoom({
@@ -63,6 +81,10 @@ export default function LiveRoom({
   const [videoDevices, setVideoDevices] = useState([]);
   const [selectedAudio, setSelectedAudio] = useState('');
   const [selectedVideo, setSelectedVideo] = useState('');
+  const [processingTimedOut, setProcessingTimedOut] = useState(false);
+  const [endingSession, setEndingSession] = useState(false);
+  const processingPollRef = useRef(null);
+  const pendingRecordingRef = useRef(null);
   const containerRef = useRef(null);
   const timerRef = useRef(null);
 
@@ -87,47 +109,131 @@ export default function LiveRoom({
     }).catch(() => {});
   }, []);
 
-  // Sync initial recording state from backend session
+  // Sync recording status from backend; poll while processing
+  const recordingStateRef = useRef(recordingState);
+  recordingStateRef.current = recordingState;
+
   useEffect(() => {
     if (!sessionId || !authToken) return undefined;
+    let cancelled = false;
     const API = API_BASE_URL;
     const endpoint = sessionType === 'WORKSHOP'
       ? `${API}/api/workshop-sessions/${sessionId}`
-      : `${API}/api/sessions/${sessionId}`;
+      : `${API}/api/trainer/sessions/${sessionId}`;
 
-    const syncStatus = () => fetch(endpoint, { headers: { Authorization: `Bearer ${authToken}` } })
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(data => {
-        const recStatus = data?.session?.recordingStatus || data?.recordingStatus;
-        if (recStatus === 'recording') setRecordingState('recording');
-        else if (recStatus === 'processing') {
-          recordingStartTimeRef.current = null;
-          setRecordingTimer(0);
-          setRecordingState('processing');
-        }
-        else if (recStatus === 'failed') {
-          recordingStartTimeRef.current = null;
-          setRecordingTimer(0);
-          setRecordingState('none');
-          setRecordingError('Recording processing failed. Please try again.');
-        } else {
-          recordingStartTimeRef.current = null;
-          setRecordingTimer(0);
-          setRecordingState('none');
-        }
-      })
-      .catch(() => {});
+    const applyRecStatus = (recStatus) => {
+      if (recStatus === 'recording' && recordingStateRef.current === 'processing') return;
+      if (recStatus === 'recording') {
+        setProcessingTimedOut(false);
+        setRecordingState('recording');
+        if (!recordingStartTimeRef.current) recordingStartTimeRef.current = Date.now();
+      } else if (recStatus === 'processing') {
+        recordingStartTimeRef.current = null;
+        setRecordingTimer(0);
+        setRecordingState('processing');
+        setProcessingTimedOut(false);
+      } else if (recStatus === 'available') {
+        recordingStartTimeRef.current = null;
+        setRecordingTimer(0);
+        setRecordingState('none');
+        setProcessingTimedOut(false);
+        setRecordingError('');
+        pendingRecordingRef.current = null;
+      } else if (recStatus === 'failed') {
+        recordingStartTimeRef.current = null;
+        setRecordingTimer(0);
+        setRecordingState('none');
+        setRecordingError('Recording processing failed. Please try again.');
+        pendingRecordingRef.current = null;
+      } else {
+        recordingStartTimeRef.current = null;
+        setRecordingTimer(0);
+        setRecordingState('none');
+        pendingRecordingRef.current = null;
+      }
+    };
+
+    const syncStatus = () => {
+      const sessPromise = fetch(endpoint, { headers: { Authorization: `Bearer ${authToken}` } })
+        .then(r => r.ok ? r.json() : Promise.reject());
+      const recId = pendingRecordingRef.current?._id;
+      const recPromise = recId
+        ? fetch(`${API}/api/trainer/recordings/${recId}`, { headers: { Authorization: `Bearer ${authToken}` } })
+            .then(r => r.ok ? r.json() : null)
+            .catch(() => null)
+        : Promise.resolve(null);
+
+      return Promise.all([sessPromise, recPromise])
+        .then(([data, recData]) => {
+          if (cancelled) return;
+          const sess = data?.session || data;
+          const freshRec = recData?.recording;
+          if (freshRec?.status === 'completed' || freshRec?.url) {
+            pendingRecordingRef.current = freshRec;
+          }
+          applyRecStatus(resolveRecordingUiStatus(sess, pendingRecordingRef.current));
+          if (sess?.status === 'completed') {
+            if (onSessionEnd) onSessionEnd({ auto: true });
+            else if (onLeave) onLeave();
+          }
+        })
+        .catch(() => {});
+    };
 
     syncStatus();
-    if (recordingState !== 'processing') return undefined;
 
-    const timer = setInterval(syncStatus, 3000);
-    const timeout = setTimeout(() => clearInterval(timer), 90000);
+    if (recordingState !== 'processing') {
+      if (processingPollRef.current) clearInterval(processingPollRef.current);
+      return () => { cancelled = true; };
+    }
+
+    processingPollRef.current = setInterval(syncStatus, 3000);
+    const timeout = setTimeout(() => {
+      if (processingPollRef.current) clearInterval(processingPollRef.current);
+      setProcessingTimedOut(true);
+      setRecordingState('none');
+      setRecordingError('Recording processing timed out. Check Recorded Videos shortly.');
+      pendingRecordingRef.current = null;
+    }, 90000);
+
     return () => {
-      clearInterval(timer);
+      cancelled = true;
+      if (processingPollRef.current) clearInterval(processingPollRef.current);
       clearTimeout(timeout);
     };
-  }, [sessionId, authToken, sessionType, recordingState]);
+  }, [sessionId, authToken, sessionType, recordingState, onSessionEnd]);
+
+  const handleRecordingStatusSocket = useCallback((data) => {
+    if (!data) return;
+    const st = data.status;
+    if (st === 'available' || st === 'completed') {
+      recordingStartTimeRef.current = null;
+      setRecordingTimer(0);
+      setRecordingState('none');
+      setRecordingError('');
+      setProcessingTimedOut(false);
+      pendingRecordingRef.current = null;
+    } else if (st === 'failed') {
+      recordingStartTimeRef.current = null;
+      setRecordingTimer(0);
+      setRecordingState('none');
+      setRecordingError('Recording processing failed.');
+    } else if (st === 'processing') {
+      setRecordingState('processing');
+    }
+  }, []);
+
+  const handleSessionEndedSocket = useCallback(() => {
+    if (onSessionEnd) onSessionEnd({ ended: true });
+    else if (onLeave) onLeave();
+  }, [onSessionEnd, onLeave]);
+
+  useSessionSocket({
+    sessionId,
+    token: authToken,
+    onSessionEnded: sessionId ? handleSessionEndedSocket : undefined,
+    onRecordingStatus: sessionId ? handleRecordingStatusSocket : undefined,
+  });
 
   // Recording timer — counts from a stable start timestamp to avoid drift/reset
   useEffect(() => {
@@ -170,6 +276,95 @@ export default function LiveRoom({
     } catch (_) {}
   }, [raisedHand]);
 
+  const applyStopRecordingResult = useCallback((data, resOk) => {
+    if (!resOk || !data?.success) {
+      setRecordingError(data?.message || 'Failed to stop recording');
+      return;
+    }
+    const rec = data.recording;
+    if (rec) pendingRecordingRef.current = rec;
+    const rs = resolveRecordingUiStatus(
+      {
+        recordingStatus: data.recordingStatus ?? data.session?.recordingStatus,
+        recordingUrl: data.session?.recordingUrl,
+      },
+      rec
+    );
+    if (rs === 'available') {
+      recordingStartTimeRef.current = null;
+      setRecordingTimer(0);
+      setRecordingState('none');
+      setRecordingError('');
+    } else if (rs === 'failed') {
+      recordingStartTimeRef.current = null;
+      setRecordingTimer(0);
+      setRecordingState('none');
+      setRecordingError(data.message || 'Recording processing failed');
+    } else {
+      recordingStartTimeRef.current = null;
+      setRecordingTimer(0);
+      setRecordingState('processing');
+    }
+  }, []);
+
+  const stopActiveRecording = useCallback(async () => {
+    if (!sessionId || !authToken || recordingState !== 'recording') return;
+    const base = API_BASE_URL;
+    const recBase = sessionType === 'WORKSHOP'
+      ? `${base}/api/workshop-sessions/${sessionId}`
+      : `${base}/api/trainer/sessions/${sessionId}`;
+    setRecordingError('');
+    setRecordingLoading(true);
+    try {
+      const res = await fetch(`${recBase}/recording/stop`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      applyStopRecordingResult(data, res.ok);
+    } catch (_) {
+      setRecordingError('Network error while stopping recording');
+    } finally {
+      setRecordingLoading(false);
+    }
+  }, [sessionId, authToken, sessionType, recordingState, applyStopRecordingResult]);
+
+  const handleEndSession = useCallback(async () => {
+    if (!onSessionEnd || endingSession) return;
+    setEndingSession(true);
+    try {
+      if (recordingState === 'recording') {
+        await stopActiveRecording();
+      }
+      await Promise.resolve(onSessionEnd({ ended: true }));
+      if (sessionId && authToken) {
+        const base = API_BASE_URL;
+        const endpoint = sessionType === 'WORKSHOP'
+          ? `${base}/api/workshop-sessions/${sessionId}`
+          : `${base}/api/sessions/${sessionId}`;
+        try {
+          const res = await fetch(endpoint, { headers: { Authorization: `Bearer ${authToken}` } });
+          if (res.ok) {
+            const data = await res.json();
+            const sess = data?.session || data;
+            const rs = resolveRecordingUiStatus(sess, pendingRecordingRef.current);
+            if (rs === 'available' || rs === 'failed' || rs === 'none') {
+              recordingStartTimeRef.current = null;
+              setRecordingTimer(0);
+              setRecordingState('none');
+              setProcessingTimedOut(false);
+              pendingRecordingRef.current = null;
+              if (rs === 'failed') setRecordingError('Recording processing failed.');
+              else setRecordingError('');
+            }
+          }
+        } catch (_) {}
+      }
+    } finally {
+      setEndingSession(false);
+    }
+  }, [onSessionEnd, endingSession, recordingState, stopActiveRecording, sessionId, authToken, sessionType]);
+
   if (!token || !serverUrl) {
     return (
       <div className="p-6" style={{ background: '#0b0f17', minHeight: '100vh', color: '#fff' }}>
@@ -185,14 +380,19 @@ export default function LiveRoom({
       <div style={styles.header}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span className="font-semibold truncate text-sm sm:text-base" style={{ color: '#fff' }}>{title}</span>
-          <span style={styles.timer}>{fmtTimer(meetingTimer)}</span>
-          {recordingState === 'recording' && (
+          {recordingState === 'recording' ? (
             <>
               <span style={{ ...styles.recBadge, background: '#7f1d1d' }}>● REC</span>
               <span style={styles.timer}>{fmtTimer(recordingTimer)}</span>
             </>
+          ) : (
+            isTrainer && recordingState !== 'processing' && (
+              <span style={styles.timer}>{fmtTimer(meetingTimer)}</span>
+            )
           )}
-          {recordingState === 'processing' && <span style={{ ...styles.recBadge, background: '#78350f', color: '#fbbf24' }}>Processing…</span>}
+          {recordingState === 'processing' && !processingTimedOut && (
+            <span style={{ ...styles.recBadge, background: '#78350f', color: '#fbbf24' }}>Processing…</span>
+          )}
           <span style={styles.qualityBadge}>{connectionQuality === 'good' ? '🟢' : connectionQuality === 'fair' ? '🟡' : '🔴'}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -222,8 +422,8 @@ export default function LiveRoom({
             {chatOpen ? 'Hide Chat' : 'Chat'}
           </button>
           {isTrainer && onSessionEnd && (
-            <button onClick={onSessionEnd} style={styles.endBtn}>
-              <i className="ti ti-player-stop" style={{ fontSize: 14 }} /> End Session
+            <button onClick={handleEndSession} disabled={endingSession || recordingLoading} style={styles.endBtn}>
+              <i className="ti ti-player-stop" style={{ fontSize: 14 }} /> {endingSession ? 'Ending…' : 'End Session'}
             </button>
           )}
           <button onClick={onLeave} style={styles.leaveBtn}>Leave</button>
@@ -241,7 +441,7 @@ export default function LiveRoom({
         style={{ flex: 1, minHeight: 0, display: 'flex' }}
       >
         {/* Main video area */}
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
           <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
             {/* Video stage */}
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -287,9 +487,6 @@ export default function LiveRoom({
                          ? `${base}/api/workshop-sessions/${sessionId}`
                          : `${base}/api/trainer/sessions/${sessionId}`;
                        if (recordingState === 'recording') {
-                         recordingStartTimeRef.current = null;
-                         setRecordingTimer(0);
-                         setRecordingState('processing');
                          setRecordingLoading(true);
                          try {
                            const res = await fetch(`${recBase}/recording/stop`, {
@@ -298,14 +495,35 @@ export default function LiveRoom({
                            });
                            const data = await res.json().catch(() => ({}));
                            if (res.ok && data.success) {
-                             setRecordingState('processing');
+                             const rec = data.recording;
+                             if (rec) pendingRecordingRef.current = rec;
+                             const rs = resolveRecordingUiStatus(
+                               {
+                                 recordingStatus: data.recordingStatus ?? data.session?.recordingStatus,
+                                 recordingUrl: data.session?.recordingUrl,
+                               },
+                               rec
+                             );
+                             if (rs === 'available') {
+                               recordingStartTimeRef.current = null;
+                               setRecordingTimer(0);
+                               setRecordingState('none');
+                               setRecordingError('');
+                             } else if (rs === 'failed') {
+                               recordingStartTimeRef.current = null;
+                               setRecordingTimer(0);
+                               setRecordingState('none');
+                               setRecordingError(data.message || 'Recording processing failed');
+                             } else {
+                               recordingStartTimeRef.current = null;
+                               setRecordingTimer(0);
+                               setRecordingState('processing');
+                             }
                            } else {
                              setRecordingError(data.message || 'Failed to stop recording');
-                             setRecordingState('recording');
                            }
                          } catch (_) {
                            setRecordingError('Network error while stopping recording');
-                           setRecordingState('recording');
                          } finally {
                            setRecordingLoading(false);
                          }
@@ -405,6 +623,9 @@ export default function LiveRoom({
         )}
 
         <RoomAudioRenderer />
+        <StartAudio label="Click to enable microphone & speakers" />
+        <EnsureMediaPublished active={canPublish} />
+        <MediaPermissionHint canPublish={canPublish} />
       </LiveKitRoom>
 
       <style>{styles.css}</style>
@@ -415,6 +636,80 @@ export default function LiveRoom({
 // ═══════════════════════════════════════════════════════════════════
 // SUB-COMPONENTS
 // ═══════════════════════════════════════════════════════════════════
+
+/** Enable mic + camera after connect so remote participants see video/audio. */
+function EnsureMediaPublished({ active }) {
+  const room = useRoomContext();
+  const { localParticipant } = useLocalParticipant();
+  const connectionState = useConnectionState();
+
+  useEffect(() => {
+    if (!active || connectionState !== 'connected' || !localParticipant) return undefined;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        await localParticipant.setMicrophoneEnabled(true);
+        await localParticipant.setCameraEnabled(true);
+        if (!cancelled && room && !room.canPlaybackAudio) {
+          await room.startAudio();
+        }
+      } catch (err) {
+        console.warn('Auto media publish blocked — user must click Enable mic/camera:', err?.message || err);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [active, connectionState, localParticipant, room]);
+
+  return null;
+}
+
+/** Shown when browser blocks mic/camera until user clicks (required on localhost HTTP). */
+function MediaPermissionHint({ canPublish }) {
+  const room = useRoomContext();
+  const { localParticipant } = useLocalParticipant();
+  const connectionState = useConnectionState();
+  const [hidden, setHidden] = useState(false);
+
+  if (!canPublish || hidden || connectionState !== 'connected' || !localParticipant) return null;
+  if (localParticipant.isMicrophoneEnabled && localParticipant.isCameraEnabled) return null;
+
+  const enableMedia = async () => {
+    try {
+      await localParticipant.setMicrophoneEnabled(true);
+      await localParticipant.setCameraEnabled(true);
+      if (room && !room.canPlaybackAudio) await room.startAudio();
+      setHidden(true);
+    } catch (err) {
+      console.error('Media permission denied:', err);
+      alert('Please allow microphone and camera access in your browser, then try again.');
+    }
+  };
+
+  return (
+    <div style={{
+      position: 'absolute', bottom: 72, left: '50%', transform: 'translateX(-50%)',
+      zIndex: 60, background: '#1e293b', color: '#fff', padding: '12px 18px',
+      borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,.4)', textAlign: 'center',
+      maxWidth: '90%', border: '1px solid #475569',
+    }}>
+      <div style={{ fontSize: 13, marginBottom: 8 }}>
+        Microphone/camera need your permission to work in the live session.
+      </div>
+      <button
+        type="button"
+        onClick={enableMedia}
+        style={{
+          background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8,
+          padding: '8px 16px', fontWeight: 700, fontSize: 13, cursor: 'pointer',
+        }}
+      >
+        Enable mic & camera
+      </button>
+    </div>
+  );
+}
 
 // -- Spotlight + filmstrip stage --
 function Stage() {
@@ -494,17 +789,25 @@ function ChatPanel({ myName, open, enabled, isTrainer, sessionId, onClose }) {
     } catch (_) {}
   };
 
+  const chatPanelStyle = isTrainer
+    ? { width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid #e5e7eb', background: '#ffffff', color: '#111827', colorScheme: 'light' }
+    : { width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid #e5e7eb', background: '#ffffff' };
+
   return (
-    <aside className={`lk-chat ${open ? 'open' : 'closed'}`} style={{ width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid #e5e7eb', background: '#fff' }}>
-      <div className="px-3 py-2 border-b border-gray-200 font-semibold text-gray-700 text-sm flex items-center justify-between">
+    <aside
+      data-lk-theme="light"
+      className={`lms-chat-panel ${isTrainer ? 'trainer-chat-panel' : ''} ${open ? 'open' : 'closed'}`}
+      style={chatPanelStyle}
+    >
+      <div className="lk-chat-header px-3 py-2 border-b border-gray-200 font-semibold text-gray-700 text-sm flex items-center justify-between" style={{ background: '#ffffff' }}>
         <span>Chat</span>
         <button onClick={onClose} className="lk-chat-toggle text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
       </div>
       {!enabled ? (
-        <div className="flex-1 flex items-center justify-center text-sm text-gray-400">Chat has been disabled</div>
+        <div className="lk-chat-messages flex-1 flex items-center justify-center text-sm text-gray-400" style={{ background: '#ffffff' }}>Chat has been disabled</div>
       ) : (
         <>
-          <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+          <div className="lk-chat-messages flex-1 overflow-y-auto px-3 py-2 space-y-2" style={{ background: '#ffffff' }}>
             {chatMessages.length === 0 ? (
               <p className="text-xs text-gray-400">No messages yet.</p>
             ) : (
@@ -521,8 +824,8 @@ function ChatPanel({ myName, open, enabled, isTrainer, sessionId, onClose }) {
             )}
             <div ref={endRef} />
           </div>
-          <form onSubmit={onSend} className="p-2 border-t border-gray-200 flex gap-2">
-            <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Type a message..." className="flex-1 px-3 py-2 text-sm rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <form onSubmit={onSend} className="lk-chat-form p-2 border-t border-gray-200 flex gap-2" style={{ background: '#ffffff' }}>
+            <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Type a message..." className="flex-1 px-3 py-2 text-sm rounded-md border border-gray-300 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" style={{ background: '#ffffff', color: '#111827', colorScheme: 'light' }} />
             <button type="submit" disabled={isSending || !draft.trim()} className="px-3 py-2 rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60">Send</button>
           </form>
         </>
@@ -690,11 +993,11 @@ const styles = {
     .lk-chat-toggle{display:none}
     @media(max-width:767px){
       .lk-chat-toggle{display:inline-block}
-      .lk-chat{position:fixed;left:0;right:0;bottom:0;width:100%;height:60dvh;border-left:none;border-top:1px solid #e5e7eb;border-top-left-radius:16px;border-top-right-radius:16px;box-shadow:0 -8px 30px rgba(0,0,0,.35);transform:translateY(100%);transition:transform .22s ease;z-index:50}
-      .lk-chat.open{transform:translateY(0)}
-      .lk-chat.closed{transform:translateY(100%)}
+      .lms-chat-panel{position:fixed;left:0;right:0;bottom:0;width:100%;height:60dvh;border-left:none;border-top:1px solid #e5e7eb;border-top-left-radius:16px;border-top-right-radius:16px;box-shadow:0 -8px 30px rgba(0,0,0,.35);transform:translateY(100%);transition:transform .22s ease;z-index:50;background:#fff!important;color-scheme:light}
+      .lms-chat-panel.open{transform:translateY(0)}
+      .lms-chat-panel.closed{transform:translateY(100%)}
     }
-    @media(min-width:768px){.lk-chat.closed{display:none}}
+    @media(min-width:768px){.lms-chat-panel.closed{display:none}}
     .meet-stage{height:100%;display:flex;flex-direction:column;gap:8px;padding:8px;box-sizing:border-box}
     .meet-spotlight{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;background:#11161f;border-radius:14px;overflow:hidden}
     .meet-spotlight .lk-participant-tile{width:100%;height:100%;border-radius:14px;overflow:hidden;cursor:pointer}
@@ -706,7 +1009,11 @@ const styles = {
     .meet-thumb .lk-participant-tile{width:100%;height:100%;border-radius:8px;overflow:hidden}
     .meet-thumb .lk-participant-tile video,.meet-thumb .lk-participant-tile .lk-participant-media-video{width:100%;height:100%;object-fit:cover}
     @media(max-width:767px){.meet-thumb{width:120px;height:68px}}
-    .lk-chat{width:340px;flex-shrink:0;display:flex;flex-direction:column;border-left:1px solid #e5e7eb;background:#fff}
+    .lms-chat-panel{width:340px;flex-shrink:0;display:flex;flex-direction:column;border-left:1px solid #e5e7eb;background:#fff!important;color:#111827!important;color-scheme:light!important;--lk-bg:#fff;--lk-bg2:#fff;--lk-bg3:#f3f4f6;--lk-fg:#111827}
+    .trainer-chat-panel,.trainer-chat-panel .lk-chat-header,.trainer-chat-panel .lk-chat-messages,.trainer-chat-panel .lk-chat-form{background:#fff!important;color:#111827!important;color-scheme:light!important}
+    .trainer-chat-panel input,.trainer-chat-panel textarea{background:#fff!important;color:#111827!important;-webkit-text-fill-color:#111827}
+    .trainer-chat-panel input::placeholder{color:#9ca3af}
+    [data-lk-theme=default] .lms-chat-panel,[data-lk-theme=default] .trainer-chat-panel{background:#fff!important;color:#111827!important}
   `,
 };
 

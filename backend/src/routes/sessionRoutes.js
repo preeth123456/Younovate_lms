@@ -8,6 +8,7 @@ const { emitToRole } = require('../services/socketService');
 const { protect, authorize } = require('../middleware/auth');
 const { rejectPastDateTime } = require('../utils/dateTimeValidation');
 const sessionCtrl = require('../controllers/sessionController');
+const { applyEffectiveSessionStatus, autoUpdatePastScheduledSessions } = require('../utils/sessionStatusUtils');
 
 const router = express.Router();
 router.use(protect);
@@ -28,6 +29,8 @@ router.get('/', async (req, res) => {
   if (status)  filter.status  = status;
   if (batchId) filter.batchId = batchId;
 
+  await autoUpdatePastScheduledSessions(Session, LMS_FILTER);
+
   const total    = await Session.countDocuments(filter);
   const sessions = await Session.find(filter)
     .populate('trainerId', 'name')
@@ -36,7 +39,9 @@ router.get('/', async (req, res) => {
     .limit(Number(limit)).skip((Number(page) - 1) * Number(limit))
     .lean();
 
-  return res.json({ success: true, sessions, total, page: Number(page) });
+  const enriched = sessions.map((s) => applyEffectiveSessionStatus(s));
+
+  return res.json({ success: true, sessions: enriched, total, page: Number(page) });
 });
 
 // GET /api/sessions/:id
@@ -45,7 +50,7 @@ router.get('/:id', async (req, res) => {
     .populate('trainerId', 'name email profilePicture')
     .populate('batchId',   'name');
   if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
-  return res.json({ success: true, session });
+  return res.json({ success: true, session: applyEffectiveSessionStatus(session) });
 });
 
 // POST /api/sessions  [admin only]

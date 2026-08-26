@@ -18,6 +18,21 @@ const LATE_GRACE_MIN  = 10;    // minutes after start before a join counts as "l
 const PRESENT_FRACTION = 0.75; // >= 75% of the session  -> present
 const PARTIAL_FRACTION = 0.25; // >= 25% of the session  -> partial
 
+/** WorkshopAttendance schema uses PascalCase enum values. */
+function normalizeWorkshopStatus(status) {
+  const map = {
+    present: 'Present',
+    late: 'Late',
+    partial: 'Partial',
+    absent: 'Absent',
+    Present: 'Present',
+    Late: 'Late',
+    Partial: 'Partial',
+    Absent: 'Absent',
+  };
+  return map[status] || 'Absent';
+}
+
 function sessionWindow(session) {
   const start    = new Date(session.scheduledAt).getTime();
   const totalSec = Math.max(1, (session.durationMinutes || 60) * 60);
@@ -119,7 +134,7 @@ async function finalizeWorkshopAttendanceOnEnd(AttendanceModel, sessionId, ended
     });
     att.duration = Math.max(0, Math.round(attendedSeconds / 60));
     att.attendancePct = Math.min(100, Math.round((att.duration / (session.durationMinutes || 60)) * 100));
-    att.attendanceStatus = status;
+    att.attendanceStatus = normalizeWorkshopStatus(status);
     if (!att.markedBy) att.markedBy = att.studentId;
     await att.save();
     finalized += 1;
@@ -132,6 +147,7 @@ module.exports = {
   classifyAttendance,
   finalizeAttendanceOnEnd,
   finalizeWorkshopAttendanceOnEnd,
+  normalizeWorkshopStatus,
   LATE_GRACE_MIN,
   PRESENT_FRACTION,
   PARTIAL_FRACTION,

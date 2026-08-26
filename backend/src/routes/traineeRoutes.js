@@ -19,6 +19,7 @@ const {
   LIVEKIT_URL,
 } = require('../services/livekitService');
 const { classifyAttendance } = require('../utils/attendanceUtils');
+const { applyEffectiveSessionStatus, autoCompletePastWorkshopSessions } = require('../utils/sessionStatusUtils');
 const {
   isLmsParticipant,
   isWorkshopParticipant,
@@ -111,7 +112,7 @@ router.get('/dashboard', async (req, res) => {
           studentId: userId,
         }).lean();
         const total = records.length;
-        const present = records.filter(r => r.attendanceStatus === 'Present' || r.attendanceStatus === 'Late').length;
+        const present = records.filter(r => ['Present', 'Late', 'Partial'].includes(r.attendanceStatus)).length;
         return { total, present, percentage: total ? ((present / total) * 100).toFixed(1) : '0.0' };
       })(),
 
@@ -326,6 +327,8 @@ router.get('/workshop-sessions', async (req, res) => {
     const filter = { sessionType: 'WORKSHOP', workshopBatchId: { $in: batchIds } };
     if (req.query.status) filter.status = req.query.status;
 
+    await autoCompletePastWorkshopSessions(Session, filter);
+
     const sessions = await Session.find(filter)
       .populate('trainerId', 'name email profilePicture')
       .populate({ path: 'workshopBatchId', populate: { path: 'workshopId', select: 'title date mode' } })
@@ -333,13 +336,14 @@ router.get('/workshop-sessions', async (req, res) => {
 
     const now = Date.now();
     const enriched = sessions.map(s => {
-      const scheduledMs = new Date(s.scheduledAt).getTime();
-      const joinBeforeMs = (s.joinBeforeMinutes || 10) * 60000;
-      const endsAtMs = scheduledMs + (s.durationMinutes || 60) * 60000;
+      const withStatus = applyEffectiveSessionStatus(s, now);
+      const scheduledMs = new Date(withStatus.scheduledAt).getTime();
+      const joinBeforeMs = (withStatus.joinBeforeMinutes || 10) * 60000;
+      const endsAtMs = scheduledMs + (withStatus.durationMinutes || 60) * 60000;
       const joinableFromMs = scheduledMs - joinBeforeMs;
-      const canJoin = s.status === 'live' || (s.status === 'scheduled' && now >= joinableFromMs && now <= endsAtMs);
+      const canJoin = withStatus.status === 'live' || (withStatus.status === 'scheduled' && now >= joinableFromMs && now <= endsAtMs);
       const secondsUntilStart = Math.max(0, Math.round((joinableFromMs - now) / 1000));
-      return { ...s, canJoin, secondsUntilStart, endsAt: new Date(endsAtMs).toISOString() };
+      return { ...withStatus, canJoin, secondsUntilStart, endsAt: new Date(endsAtMs).toISOString() };
     });
 
     return res.json({ success: true, sessions: enriched });
@@ -459,7 +463,7 @@ router.get('/workshop-attendance', async (req, res) => {
       .populate({ path: 'workshopBatchId', select: 'batchName' })
       .sort({ createdAt: -1 }).lean();
     const total = records.length;
-    const present = records.filter(r => r.attendanceStatus === 'Present' || r.attendanceStatus === 'Late').length;
+    const present = records.filter(r => ['Present', 'Late', 'Partial'].includes(r.attendanceStatus)).length;
     return res.json({ success: true, records, stats: { total, present, percentage: total ? ((present / total) * 100).toFixed(1) : '0.0' } });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });

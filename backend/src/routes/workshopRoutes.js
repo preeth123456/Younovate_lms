@@ -928,7 +928,7 @@ function timeToMinutes(t) {
 // POST /api/workshops/batches — create a batch
 router.post('/batches', protect, authorize('admin'), async (req, res) => {
   try {
-    const { workshopId, batchName, batchCode, registrationIds, trainer, startDate, endDate, startTime, endTime, mode, capacity, status, notes } = req.body;
+    const { workshopId, batchName, batchCode, registrationIds, trainer, trainerId, startDate, endDate, startTime, endTime, mode, capacity, status, notes } = req.body;
 
     if (!batchName || !batchName.trim()) return res.status(400).json({ success: false, message: 'Batch name is required.' });
     if (!batchCode || !batchCode.trim()) return res.status(400).json({ success: false, message: 'Batch code is required.' });
@@ -1013,13 +1013,31 @@ router.post('/batches', protect, authorize('admin'), async (req, res) => {
       .filter(r => r.userId)
       .map(r => r.userId.toString());
 
+    let resolvedTrainerId = null;
+    let trainerName = (trainer || '').trim();
+    if (trainerId && isValidId(trainerId)) {
+      const trainerUser = await User.findById(trainerId).select('name email role').lean();
+      if (!trainerUser) return res.status(404).json({ success: false, message: 'Trainer not found.' });
+      if (trainerUser.role !== 'trainer') return res.status(400).json({ success: false, message: 'Selected user is not a trainer.' });
+      resolvedTrainerId = trainerUser._id;
+      trainerName = trainerUser.name;
+    } else if (trainerName) {
+      const trainerUser = await User.findOne({ role: 'trainer', name: new RegExp(`^${trainerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') })
+        .select('name email role').lean();
+      if (trainerUser) {
+        resolvedTrainerId = trainerUser._id;
+        trainerName = trainerUser.name;
+      }
+    }
+
     const batchData = {
       workshopId,
       batchName: batchName.trim(),
       batchCode: batchCode.trim(),
       registrationIds: uniqueRegIds,
       students: userIds, // ← CRITICAL: populated from registration.userId
-      trainer: trainer || '',
+      trainer: trainerName,
+      trainerId: resolvedTrainerId,
       startDate: sd,
       endDate: endDate ? new Date(endDate) : null,
       startTime: startTime ? startTime.trim() : '',
@@ -1030,6 +1048,10 @@ router.post('/batches', protect, authorize('admin'), async (req, res) => {
       notes: notes || '',
       createdBy: req.user._id,
     };
+    if (resolvedTrainerId) {
+      batchData.assignedBy = req.user._id;
+      batchData.assignedAt = new Date();
+    }
 
     const batch = await WorkshopBatch.create(batchData);
 

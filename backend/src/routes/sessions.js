@@ -8,6 +8,7 @@ const auth = require('../middleware/auth');
 const { roomService, stopRecording, roomNameFor, generateLiveKitToken, LIVEKIT_URL } = require('../services/livekitService');
 const { AccessToken } = require('livekit-server-sdk');
 const { classifyAttendance, finalizeAttendanceOnEnd } = require('../utils/attendanceUtils');
+const { reconcileRecordingByEgressId } = require('../utils/recordingStorage');
 
 const router = express.Router();
 
@@ -161,12 +162,13 @@ router.post('/:id/join', auth, async (req, res) => {
 
     const role     = isTrainer ? 'trainer' : 'student';
     const identity = `${role}-${me}`;
+    const roomName = roomNameFor(session._id);
 
     const at = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET,
       { identity, name: req.user.name, ttl: '3h' });
     at.addGrant({
       roomJoin: true,
-      room: session.roomName,
+      room: roomName,
       canPublish: isTrainer,
       canSubscribe: true,
       canPublishData: true,
@@ -207,8 +209,10 @@ router.post('/:id/end', auth, async (req, res) => {
       return res.status(403).json({ message: 'Only the trainer can end this session' });
     }
 
-    if (session.egressId) {
-      try { await stopRecording(session.egressId); }
+    const stoppedEgressId = session.egressId;
+
+    if (stoppedEgressId) {
+      try { await stopRecording(stoppedEgressId); }
       catch (e) { console.error('stop recording failed ->', e.message); }
       session.recordingStatus = 'processing';
     }
@@ -218,11 +222,11 @@ router.post('/:id/end', auth, async (req, res) => {
     session.endedAt = new Date();
     await session.save();
 
-    if (session.egressId) {
+    if (stoppedEgressId) {
       try {
         const Recording = require('../models/Recording');
         const endedAt = new Date();
-        const recording = await Recording.findOne({ egressId: session.egressId }).lean();
+        const recording = await Recording.findOne({ egressId: stoppedEgressId }).lean();
         let durationSeconds = 0;
         if (recording && recording.startedAt) {
           durationSeconds = Math.round((endedAt.getTime() - new Date(recording.startedAt).getTime()) / 1000);
@@ -230,16 +234,20 @@ router.post('/:id/end', auth, async (req, res) => {
           durationSeconds = Math.round((endedAt.getTime() - new Date(session.startedAt).getTime()) / 1000);
         }
         await Recording.findOneAndUpdate(
-          { egressId: session.egressId },
-          { $set: { endedAt, durationSeconds } },
+          { egressId: stoppedEgressId },
+          { $set: { endedAt, durationSeconds, status: recording?.status === 'completed' ? 'completed' : 'processing' } },
           { new: true }
         );
-        if (recording && recording.status !== 'completed') {
-          await Recording.findOneAndUpdate(
-            { egressId: session.egressId },
-            { $set: { status: 'processing' } }
-          );
+        const reconciled = await reconcileRecordingByEgressId(stoppedEgressId, { maxAttempts: 15, delayMs: 2000, markFailed: true });
+        if (reconciled?.status === 'completed') {
+          session.recordingStatus = 'available';
+          session.recordingUrl = reconciled.url || session.recordingUrl;
+          session.egressId = '';
+        } else if (reconciled?.status === 'failed') {
+          session.recordingStatus = 'failed';
+          session.egressId = '';
         }
+        await session.save();
       } catch (_) {}
     }
 

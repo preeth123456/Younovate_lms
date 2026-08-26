@@ -1,14 +1,26 @@
 // src/utils/emailUtils.js
 'use strict';
 const nodemailer = require('nodemailer');
-const { Resend } = require('resend');
 
-const resendApiKey = process.env.RESEND_API_KEY;
-const useResend = Boolean(resendApiKey);
+// Resend (Render/production) is opt-in only. Default: existing SMTP (Nodemailer).
+const USE_RESEND = process.env.EMAIL_PROVIDER === 'resend' && Boolean(process.env.RESEND_API_KEY);
 
-const defaultFrom = process.env.RESEND_FROM
-  || process.env.SMTP_FROM
-  || 'Younovate LMS <onboarding@resend.dev>';
+let Resend = null;
+let resendClient = null;
+if (USE_RESEND) {
+  try {
+    Resend = require('resend').Resend;
+    resendClient = new Resend(process.env.RESEND_API_KEY);
+  } catch (err) {
+    console.error('Resend module load failed — falling back to SMTP:', err.message);
+  }
+}
+
+const useResend = USE_RESEND && Boolean(resendClient);
+
+const defaultFrom = process.env.SMTP_FROM
+  || process.env.RESEND_FROM
+  || 'Younovate LMS <noreply@younovate.in>';
 
 // ── SMTP (fallback when RESEND_API_KEY is not set) ────────────────────────────
 const smtpConfig = {
@@ -26,8 +38,8 @@ console.log('📧 Email Configuration');
 console.log('════════════════════════════════════════════');
 console.log(`   Provider:         ${useResend ? 'Resend API' : 'SMTP (Nodemailer)'}`);
 if (useResend) {
-  console.log(`   RESEND_API_KEY:   ${resendApiKey.substring(0, 8)}...`);
-  console.log(`   RESEND_FROM:      ${defaultFrom}`);
+  console.log(`   RESEND_API_KEY:   ${String(process.env.RESEND_API_KEY).substring(0, 8)}...`);
+  console.log(`   RESEND_FROM:      ${process.env.RESEND_FROM || defaultFrom}`);
 } else {
   console.log(`   SMTP_HOST:        ${process.env.SMTP_HOST || 'NOT SET'}`);
   console.log(`   SMTP_PORT:        ${Number(process.env.SMTP_PORT) || 587}`);
@@ -37,13 +49,11 @@ if (useResend) {
 console.log('════════════════════════════════════════════\n');
 
 const transporter = useResend ? null : nodemailer.createTransport(smtpConfig);
-const resendClient = useResend ? new Resend(resendApiKey) : null;
 
 if (!useResend && transporter) {
   transporter.verify((err) => {
     if (err) {
       console.error('❌ SMTP CONNECTION VERIFICATION FAILED:', err.message);
-      console.error('   Set RESEND_API_KEY to use Resend instead of SMTP.');
     } else {
       console.log('✅ SMTP connection verified — ready to send emails');
     }
@@ -52,6 +62,7 @@ if (!useResend && transporter) {
   console.log('✅ Resend API configured — ready to send emails');
 }
 
+/* Resend sender — only used when EMAIL_PROVIDER=resend
 async function sendViaResend({ to, subject, html, from }) {
   const { data, error } = await resendClient.emails.send({
     from,
@@ -67,6 +78,7 @@ async function sendViaResend({ to, subject, html, from }) {
   }
   return { messageId: data?.id, response: 'Resend OK', accepted: [to], rejected: [] };
 }
+*/
 
 async function sendViaSmtp({ to, subject, html, from }) {
   return transporter.sendMail({ from, to, subject, html });
@@ -83,7 +95,21 @@ const sendEmail = async ({ to, subject, html }) => {
 
   try {
     const info = useResend
-      ? await sendViaResend({ to, subject, html, from })
+      ? await (async () => {
+        const { data, error } = await resendClient.emails.send({
+          from,
+          to: Array.isArray(to) ? to : [to],
+          subject,
+          html,
+        });
+        if (error) {
+          const err = new Error(error.message || 'Resend API error');
+          err.name = 'ResendError';
+          err.details = error;
+          throw err;
+        }
+        return { messageId: data?.id, response: 'Resend OK', accepted: [to], rejected: [] };
+      })()
       : await sendViaSmtp({ to, subject, html, from });
 
     console.log(`✅ Email sent successfully to ${to}`);

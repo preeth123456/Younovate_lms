@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
+import toast from 'react-hot-toast';
 import {
   fetchAdminWorkshops,
   createWorkshop,
@@ -338,13 +339,17 @@ export default function WorkshopManagement() {
     setSaving(true);
     try {
       if (editWorkshop) {
-        await dispatch(updateWorkshop({ id: editWorkshop._id, ...formData, date: formData.date || new Date().toISOString() }));
+        await dispatch(updateWorkshop({ id: editWorkshop._id, ...formData, date: formData.date || new Date().toISOString() })).unwrap();
+        toast.success('Workshop updated successfully');
       } else {
-        await dispatch(createWorkshop({ ...formData, date: formData.date || new Date().toISOString() }));
+        await dispatch(createWorkshop({ ...formData, date: formData.date || new Date().toISOString() })).unwrap();
+        toast.success('Workshop saved successfully');
       }
       setShowForm(false);
       setEditWorkshop(null);
       dispatch(fetchAdminWorkshops({ page: 1, limit: 50 }));
+    } catch (err) {
+      toast.error(typeof err === 'string' ? err : 'Failed to save workshop');
     } finally {
       setSaving(false);
     }

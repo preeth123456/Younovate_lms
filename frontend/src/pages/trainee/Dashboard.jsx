@@ -8,6 +8,7 @@ import {
   fetchMyWorkshopAttendance,
   fetchMyWorkshopCertificates,
   joinWorkshopSession,
+  leaveWorkshopSession,
   clearWorkshopLive,
   clearJoinError,
   selectTraineeDashboard,
@@ -39,6 +40,10 @@ function StatusPill({ status }) {
     Eligible:  [C.green, '#DCFCE7'],
     Issued:    [C.accent,'#EEF2FF'],
     Pending:   [C.text3, '#F3F4F6'],
+    Present:   [C.green, '#DCFCE7'],
+    Late:      [C.amber, '#FEF3C7'],
+    Partial:   [C.accent,'#EEF2FF'],
+    Absent:    [C.text3, '#F3F4F6'],
   };
   const [color, bg] = map[status] || [C.text3, '#F3F4F6'];
   return <span style={badge(color, bg)}>{status}</span>;
@@ -55,6 +60,7 @@ export default function TraineeDashboard() {
   const liveConn      = useAppSelector(selectTraineeLiveConnection);
   const joinStatus    = useAppSelector(selectJoinStatus);
   const joinError     = useAppSelector(selectJoinError);
+  const authToken     = useAppSelector(s => s.auth?.token || '');
 
   useEffect(() => {
     dispatch(fetchTraineeDashboard());
@@ -64,9 +70,21 @@ export default function TraineeDashboard() {
     dispatch(fetchMyWorkshopCertificates());
   }, [dispatch]);
 
+  const hasLiveWorkshop = sessions.some(s => s.status === 'live') || Boolean(liveConn?.sessionId);
+
+  // Refresh workshop attendance while a session is live (auto-updates after join/leave)
+  useEffect(() => {
+    if (!hasLiveWorkshop) return undefined;
+    const timer = setInterval(() => dispatch(fetchMyWorkshopAttendance()), 5000);
+    return () => clearInterval(timer);
+  }, [dispatch, hasLiveWorkshop]);
+
   const handleJoin = (sessionId) => dispatch(joinWorkshopSession(sessionId));
-  const handleLeave = () => {
-    if (liveConn?.sessionId) dispatch({ type: 'trainee/leaveWorkshopSession', payload: liveConn.sessionId });
+  const handleLeave = async () => {
+    if (liveConn?.sessionId) {
+      await dispatch(leaveWorkshopSession(liveConn.sessionId));
+      dispatch(fetchMyWorkshopAttendance());
+    }
     dispatch(clearWorkshopLive());
   };
 
@@ -79,6 +97,9 @@ export default function TraineeDashboard() {
         canPublish={true}
         title="Live Workshop Session"
         identityName="Trainee"
+        sessionId={liveConn.sessionId}
+        sessionType="WORKSHOP"
+        authToken={authToken}
         onLeave={handleLeave}
       />
     );
@@ -87,7 +108,11 @@ export default function TraineeDashboard() {
   if (status === 'loading' && !data) return <div style={{ padding: 32 }}>Loading...</div>;
 
   const liveSessions     = sessions.filter(s => s.status === 'live');
-  const upcomingSessions = sessions.filter(s => s.status === 'scheduled');
+  const upcomingSessions = sessions.filter(s => {
+    if (s.status !== 'scheduled') return false;
+    const endsAt = new Date(s.scheduledAt).getTime() + (s.durationMinutes || 60) * 60000;
+    return Date.now() < endsAt;
+  });
 
   return (
     <div style={{ padding: 24, fontFamily: 'Calibri, sans-serif', maxWidth: 1100, margin: '0 auto' }}>

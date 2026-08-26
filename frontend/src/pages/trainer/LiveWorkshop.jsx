@@ -20,6 +20,7 @@ import {
 import {
   fetchWorkshopSessions,
   fetchSessionParticipants,
+  markAttendanceWS,
   selectWorkshopSessions,
   selectWSSessionStatus,
   selectWSParticipants,
@@ -48,6 +49,9 @@ export default function LiveWorkshop() {
   const [announcements, setAnnouncements] = useState([]);
   const [copied, setCopied]               = useState(false);
   const [recording, setRecording]         = useState({ status: 'none', loading: false, error: '' });
+  const [markingId, setMarkingId]         = useState(null);
+
+  const ATTENDANCE_OPTIONS = ['Present', 'Late', 'Partial', 'Absent'];
 
   const selected = workshops.find(w => w._id === selectedId) || workshops[0] || null;
 
@@ -59,6 +63,8 @@ export default function LiveWorkshop() {
   }) || null;
 
   const sessionId = workshopSession?._id;
+  const sessionStatus = workshopSession?.status || '';
+  const isLive        = sessionStatus === 'live';
   const participants = useSelector(selectWSParticipants(sessionId));
 
   // Load workshops on mount
@@ -78,25 +84,42 @@ export default function LiveWorkshop() {
     if (sessionId) dispatch(fetchSessionParticipants(sessionId));
   }, [sessionId, dispatch]);
 
+  // Auto-refresh participant attendance while the workshop session is live
+  useEffect(() => {
+    if (!sessionId || !isLive) return undefined;
+    const timer = setInterval(() => {
+      dispatch(fetchSessionParticipants(sessionId));
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [sessionId, isLive, dispatch]);
+
   // Keep recording UI in sync with backend session state
   useEffect(() => {
     const rs = workshopSession?.recordingStatus;
+    const hasUrl = Boolean(workshopSession?.recordingUrl);
     if (rs === 'recording') {
       setRecording({ status: 'recording', loading: false, error: '' });
-    } else if (rs === 'processing') {
+    } else if (rs === 'processing' && !hasUrl) {
       setRecording({ status: 'processing', loading: false, error: '' });
     } else if (rs === 'failed') {
       setRecording({ status: 'none', loading: false, error: 'Recording processing failed. Please try again.' });
-    } else if (rs === 'available' || rs === 'none' || !rs) {
+    } else if (rs === 'available' || rs === 'none' || !rs || (rs === 'processing' && hasUrl)) {
       setRecording({ status: 'none', loading: false, error: '' });
     }
-  }, [workshopSession?.recordingStatus, workshopSession?._id]);
+  }, [workshopSession?.recordingStatus, workshopSession?.recordingUrl, workshopSession?._id]);
 
   // Poll while a recording is finalizing
   useEffect(() => {
     if (recording.status !== 'processing' || !sessionId) return undefined;
     const timer = setInterval(() => dispatch(fetchWorkshopSessions()), 3000);
-    const timeout = setTimeout(() => clearInterval(timer), 90000);
+    const timeout = setTimeout(() => {
+      clearInterval(timer);
+      setRecording(r => (
+        r.status === 'processing'
+          ? { status: 'none', loading: false, error: 'Recording processing timed out. Check Recorded Videos shortly.' }
+          : r
+      ));
+    }, 90000);
     return () => {
       clearInterval(timer);
       clearTimeout(timeout);
@@ -130,6 +153,7 @@ export default function LiveWorkshop() {
     if (!sessionId) return;
     try {
       await dispatch(endWorkshop(sessionId)).unwrap();
+      dispatch(clearLiveConnection());
       dispatch(fetchWorkshopSessions());
     } catch (err) {
       console.error('Failed to end workshop session:', err);
@@ -149,7 +173,30 @@ export default function LiveWorkshop() {
     dispatch(fetchWorkshopSessions());
   }, [dispatch]);
 
-   const handleRecordingStart = async () => {
+  const handleMarkAttendance = async (participant, status) => {
+    if (!sessionId) return;
+    const participantId = participant.userId || participant._id;
+    if (!participantId) return;
+    setMarkingId(participant._id);
+    try {
+      await dispatch(markAttendanceWS({
+        sessionId,
+        participantId,
+        status,
+        attendedMinutes: status === 'Present' ? (workshopSession?.durationMinutes || 60)
+          : status === 'Partial' ? Math.round((workshopSession?.durationMinutes || 60) * 0.5)
+          : status === 'Late' ? Math.round((workshopSession?.durationMinutes || 60) * 0.75)
+          : 0,
+      })).unwrap();
+      dispatch(fetchSessionParticipants(sessionId));
+    } catch (err) {
+      console.error('Failed to mark attendance:', err);
+    } finally {
+      setMarkingId(null);
+    }
+  };
+
+  const handleRecordingStart = async () => {
     if (!sessionId) return;
     setRecording(r => ({ ...r, loading: true, error: '' }));
     try {
@@ -167,16 +214,21 @@ export default function LiveWorkshop() {
 
    const handleRecordingStop = async () => {
     if (!sessionId) return;
-    setRecording({ status: 'processing', loading: true, error: '' });
+    setRecording(r => ({ ...r, loading: true, error: '' }));
     try {
-      await axios.post(`${API_BASE_URL}/api/workshop-sessions/${sessionId}/recording/stop`, {}, {
+      const { data } = await axios.post(`${API_BASE_URL}/api/workshop-sessions/${sessionId}/recording/stop`, {}, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
-      setRecording({
-        status: 'processing',
-        loading: false,
-        error: '',
-      });
+      const rec = data?.recording;
+      const rs = data?.recordingStatus
+        || (rec?.status === 'completed' ? 'available' : rec?.status === 'failed' ? 'failed' : null);
+      if (rs === 'available' || rec?.url || data?.session?.recordingUrl) {
+        setRecording({ status: 'none', loading: false, error: '' });
+      } else if (rs === 'failed') {
+        setRecording({ status: 'none', loading: false, error: data?.message || 'Recording processing failed.' });
+      } else {
+        setRecording({ status: 'processing', loading: false, error: '' });
+      }
       dispatch(fetchWorkshopSessions());
     } catch (err) {
       console.error('Failed to stop recording:', err);
@@ -201,16 +253,12 @@ export default function LiveWorkshop() {
     setAnnouncement('');
   };
 
-  // ── BUG FIX: Use Session model status as source of truth ──────────────
-  // The Workshop model status is secondary. Session status drives the UI.
-  // If session is completed, we must NOT show LIVE or allow start/enter.
-  const sessionStatus = workshopSession?.status || '';
-  const isLive        = sessionStatus === 'live';
+  // ── Session status drives the UI ──────────────────────────────────────
   const isCompleted   = sessionStatus === 'completed';
   const isScheduled   = sessionStatus === 'scheduled';
   const canStart      = sessionId && isScheduled && !isLive && !isCompleted;
 
-  const joined    = participants.filter(p => p.attendance?.attendanceStatus === 'Present' || p.attendance?.attendanceStatus === 'Partial');
+  const joined    = participants.filter(p => ['Present', 'Partial', 'Late'].includes(p.attendance?.attendanceStatus));
   const notJoined = participants.filter(p => !p.attendance || p.attendance?.attendanceStatus === 'Absent');
 
 // If we have a live connection, render the LiveKit room
@@ -362,21 +410,33 @@ export default function LiveWorkshop() {
                   <Empty icon="👥" msg="No participants yet" />
                 ) : participants.map(p => {
                   const att = p.attendance;
-                  const isPresent = att?.attendanceStatus === 'Present' || att?.attendanceStatus === 'Partial';
+                  const isPresent = ['Present', 'Late', 'Partial'].includes(att?.attendanceStatus);
+                  const markKey = p.userId || p._id;
                   return (
-                    <div key={p._id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: `1px solid #f3f4f6` }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div key={p._id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: `1px solid #f3f4f6`, gap: 8, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                         <div style={{ width: 32, height: 32, borderRadius: '50%', background: C.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '0.8rem', fontWeight: 700, flexShrink: 0 }}>
                           {(p.fullName || 'S')[0].toUpperCase()}
                         </div>
-                        <div>
+                        <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: '0.84rem', fontWeight: 600, color: C.text1 }}>{p.fullName || '—'}</div>
                           <div style={{ fontSize: '0.72rem', color: C.text4 }}>{p.email}</div>
                         </div>
                       </div>
-                      <span style={{ background: isPresent ? '#dcfce7' : '#f3f4f6', color: isPresent ? '#15803d' : C.text4, padding: '2px 8px', borderRadius: 99, fontSize: '0.71rem', fontWeight: 700 }}>
-                        {att?.attendanceStatus || 'Pending'}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                        <select
+                          value={att?.attendanceStatus || 'Pending'}
+                          disabled={markingId === p._id || !markKey}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v !== 'Pending') handleMarkAttendance(p, v);
+                          }}
+                          style={{ fontSize: '0.72rem', padding: '4px 8px', borderRadius: 8, border: '1px solid #e5e7eb', fontWeight: 700, color: isPresent ? '#15803d' : '#475569', background: '#fff' }}
+                        >
+                          <option value="Pending" disabled>Pending</option>
+                          {ATTENDANCE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </div>
                     </div>
                   );
                 })}

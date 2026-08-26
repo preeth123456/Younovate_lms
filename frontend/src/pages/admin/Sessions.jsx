@@ -38,6 +38,10 @@ import { toLocalInput, fromLocalInput, minDateTime, isPastDateTime } from '../..
 const SC = { scheduled: '#2f6f9b', live: '#e12e2a', completed: '#16a05f', cancelled: '#657691' };
 const STATUSES = ['scheduled', 'live', 'completed', 'cancelled'];
 
+const formatSessionStatus = (st) => {
+  return st;
+};
+
 // Toast look-up (icon glyph + colours).
 const TOAST = {
   success: { color: '#16a05f', border: '#bfe6d0', glyph: '✓' },
@@ -352,7 +356,7 @@ export default function AdminSessions() {
   };
 
   const StatusBadge = ({ st }) => (
-    <span style={badge(SC[st] || '#ccc')}>{st === 'live' && <span style={livedot} />}{st}</span>
+    <span style={badge(SC[st] || '#ccc')}>{st === 'live' && <span style={livedot} />}{formatSessionStatus(st)}</span>
   );
 
   // ── Pagination bar ──
@@ -402,7 +406,7 @@ export default function AdminSessions() {
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔎  Search title, trainer or batch…" style={input} />
         <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} style={input}>
           <option value="all">All statuses</option>
-          {STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+          {STATUSES.map((st) => <option key={st} value={st}>{formatSessionStatus(st)}</option>)}
         </select>
         <select value={fTrainer} onChange={(e) => setFTrainer(e.target.value)} style={input}>
           <option value="">All trainers</option>
@@ -606,7 +610,7 @@ export default function AdminSessions() {
                 {modal.mode === 'edit' && (
                   <Field label="Status">
                     <select style={input} value={modal.form.status} onChange={(e) => setField('status', e.target.value)}>
-                      {STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+                      {STATUSES.map((st) => <option key={st} value={st}>{formatSessionStatus(st)}</option>)}
                     </select>
                   </Field>
                 )}

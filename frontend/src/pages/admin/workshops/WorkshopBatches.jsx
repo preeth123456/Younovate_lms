@@ -84,6 +84,12 @@ export default function WorkshopBatchesAdmin() {
   useEffect(() => { load(page); }, [page]);
   useEffect(() => { if (viewId) dispatch(fetchWorkshopBatchById(viewId)); }, [dispatch, viewId]);
 
+  // Keep admin view in sync when trainer changes batch status via live session start/end
+  useEffect(() => {
+    const interval = setInterval(() => load(page), 30000);
+    return () => clearInterval(interval);
+  }, [load, page]);
+
   // Client-side filter (search + status)
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

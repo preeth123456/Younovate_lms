@@ -7,9 +7,12 @@ import {
   resetWorkshopRegistrationPassword,
   createWorkshopBatch,
   fetchWorkshopBatches,
+  fetchTrainerList,
   selectWsRegistrations,
   selectWsRegistrationsMeta,
   selectWsRegistrationsStatus,
+  selectTrainerList,
+  selectTrainerListStatus,
 } from '../../../features/workshops/workshopSlice';
 import toast from 'react-hot-toast';
 import { isPastDateOnly, isPastDateTime } from '../../../utils/dateTime';
@@ -46,6 +49,8 @@ export default function WorkshopRegistrationsAdmin() {
   const registrations = useSelector(selectWsRegistrations);
   const meta = useSelector(selectWsRegistrationsMeta);
   const status = useSelector(selectWsRegistrationsStatus);
+  const trainerList = useSelector(selectTrainerList);
+  const trainerListStatus = useSelector(selectTrainerListStatus);
 
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -235,6 +240,7 @@ const handleDelete = async (id, name) => {
     batchCode: '',
     workshopId: '',
     trainer: '',
+    trainerId: '',
     startDate: '',
     endDate: '',
     startTime: '',
@@ -321,6 +327,10 @@ const handleDelete = async (id, name) => {
     setCreateOpen(true);
   };
 
+  useEffect(() => {
+    if (createOpen) dispatch(fetchTrainerList());
+  }, [dispatch, createOpen]);
+
   const resetCreate = () => {
     setCreateOpen(false);
     setCreateBusy(false);
@@ -329,6 +339,7 @@ const handleDelete = async (id, name) => {
       batchCode: '',
       workshopId: '',
       trainer: '',
+      trainerId: '',
       startDate: '',
       endDate: '',
       startTime: '',
@@ -370,6 +381,7 @@ const handleDelete = async (id, name) => {
       batchName: form.batchName,
       batchCode: form.batchCode,
       registrationIds: selectedIds,
+      trainerId: form.trainerId || undefined,
       trainer: form.trainer || '',
       startDate: form.startDate ? new Date(form.startDate).toISOString() : null,
       endDate: form.endDate ? new Date(form.endDate).toISOString() : undefined,
@@ -590,7 +602,20 @@ const handleDelete = async (id, name) => {
                 </div>
                 <div>
                   <div style={{ fontSize: 11, fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', marginBottom: 4 }}>Trainer</div>
-                  <input style={S.input} value={form.trainer} onChange={e => setForm(f => ({ ...f, trainer: e.target.value }))} placeholder="Trainer name" />
+                  <select
+                    style={S.input}
+                    value={form.trainerId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      const t = trainerList.find((tr) => String(tr._id) === String(id));
+                      setForm((f) => ({ ...f, trainerId: id, trainer: t?.name || '' }));
+                    }}
+                  >
+                    <option value="">{trainerListStatus === 'loading' ? 'Loading trainers…' : 'Select trainer (optional)'}</option>
+                    {trainerList.map((t) => (
+                      <option key={t._id} value={t._id}>{t.name}{t.email ? ` (${t.email})` : ''}</option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
