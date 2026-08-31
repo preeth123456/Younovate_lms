@@ -281,7 +281,25 @@ const endSession = async (req, res) => {
       console.warn('Attendance finalization on end failed:', finalizeErr.message);
     }
 
-    emitToRole('trainee', 'session:status', { id: String(session._id), status: 'completed' });
+    try {
+      const room = session.roomName || roomNameFor(session._id);
+      if (room) await roomService.deleteRoom(room);
+    } catch (_) {}
+
+    try {
+      emitToSession(session._id.toString(), 'session:ended', {
+        sessionId: session._id,
+        status: 'completed',
+        endedAt: session.endedAt,
+        message: 'Session has ended.',
+      });
+    } catch (_) {}
+
+    emitToRole('trainee', 'session:status', {
+      sessionId: String(session._id),
+      id: String(session._id),
+      status: 'completed',
+    });
 
     return res.json({ success: true, message: 'Session ended', session });
   } catch (err) {

@@ -17,6 +17,7 @@ import {
 } from '../../features/session/batchSlice';
 
 import { todayDateInput, nowTimeInput, isPastDateTime } from '../../utils/dateTime';
+import WatchRecordingButton from '../../components/recording/WatchRecordingButton';
 
 // Attendance comes through the EXISTING trainer slice (same thunk/selectors the
 // Trainer → Attendance page uses). No new slice, no store wiring, no extra API.
@@ -238,6 +239,7 @@ const SessionDetail = ({ mode = 'view' }) => {
   const sessions = useSelector(selectAllSessions);
   const status   = useSelector(selectSessionsStatus);
   const batches  = useSelector(selectAllBatches);
+  const authToken = useSelector(s => s.auth?.token || '');
 
   const isCreate = mode === 'create' || id === 'new';
   const session  = useMemo(() => sessions.find(s => s._id === id) || null, [sessions, id]);
@@ -392,7 +394,15 @@ const SessionDetail = ({ mode = 'view' }) => {
                   const label = typeof r === 'string' ? r : (r.title || r.name || r.url || 'Resource');
                   return url ? <a key={i} href={url} target="_blank" rel="noreferrer" style={{ fontSize: '0.82rem', color: '#4338ca', textDecoration: 'none', fontWeight: 600 }}>📎 {label}</a> : null;
                 })}
-                {session.recordingUrl && <a href={session.recordingUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.82rem', color: '#dc2626', textDecoration: 'none', fontWeight: 600 }}>▶ Recording</a>}
+                {session.recordingUrl && (
+                  <WatchRecordingButton
+                    sessionId={session._id}
+                    token={authToken}
+                    workshop={session.sessionType === 'WORKSHOP'}
+                    label="▶ Recording"
+                    style={{ background: 'transparent', color: '#dc2626', padding: 0, fontSize: '0.82rem' }}
+                  />
+                )}
               </div>
             )}
 

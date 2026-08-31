@@ -65,8 +65,8 @@ function WsSessionCard({ session, onJoin, joiningId, joinStatus }) {
   const countdown = useCountdown(session.secondsUntilStart);
   const isLive    = session.status === 'live';
   const isOver    = session.status === 'completed' || session.status === 'cancelled';
-  // canJoin from backend; locally re-check via countdown reaching 0
-  const joinable  = !isOver && (session.canJoin || (session.status === 'scheduled' && countdown === ''));
+  // canJoin from backend; locally re-check via scheduled time
+  const joinable  = !isOver && (session.canJoin || (session.status === 'scheduled' && new Date(session.scheduledAt).getTime() <= Date.now()));
   const isJoining = joinStatus === 'loading' && joiningId === session._id;
 
   return (

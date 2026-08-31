@@ -122,6 +122,7 @@ const TraineeLiveSession = ({ session, connection: connectionProp, onLeave }) =>
         identityName={user?.name || 'Trainee'}
         sessionId={sessionId}
         sessionType={session?.sessionType || 'LMS'}
+        authToken={token}
         onLeave={handleLeave}
       />
     );

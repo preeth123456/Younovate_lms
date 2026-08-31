@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import axios from 'axios';
+import { API_BASE_URL } from '../../config/api';
 import {
   fetchTrainerWorkshops,
-  fetchWorkshopFeedback,
   setSelectedWorkshop,
   selectTrainerWorkshops,
-  selectWorkshopFeedback,
   selectSelectedWorkshopId,
 } from '../../features/Trainer/trainerWorkshopSlice';
 import { S, Empty, PageHeader, KPICard, fmtDateTime, WorkshopSelector } from './workshopShared';
+
+const API = API_BASE_URL;
 
 const CSS = `@keyframes spin{to{transform:rotate(360deg)}} .ws-row:hover{background:#f9fafb!important}`;
 
@@ -38,11 +40,14 @@ function RatingBar({ star, count, total }) {
 
 export default function WorkshopFeedback() {
   const dispatch   = useDispatch();
+  const token      = useSelector(s => s.auth?.token || '');
   const workshops  = useSelector(selectTrainerWorkshops);
   const selectedId = useSelector(selectSelectedWorkshopId);
   const selected   = workshops.find(w => w._id === selectedId) || workshops[0] || null;
-  const feedbackData = useSelector(selectWorkshopFeedback(selected?._id));
-  const { feedback = [], stats = {} } = feedbackData;
+  const [feedback, setFeedback] = useState([]);
+  const [stats, setStats] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const [search,  setSearch]  = useState('');
   const [fRating, setFRating] = useState('all');
@@ -50,26 +55,42 @@ export default function WorkshopFeedback() {
   useEffect(() => { dispatch(fetchTrainerWorkshops()); }, [dispatch]);
 
   useEffect(() => {
-    if (selected?._id) {
-      dispatch(fetchWorkshopFeedback(selected._id));
-      if (!selectedId) dispatch(setSelectedWorkshop(selected._id));
-    }
-  }, [selected?._id, dispatch]);
+    if (!token) return;
+    setLoading(true);
+    setError('');
+    axios.get(`${API}/api/trainer/workshop-feedback`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => {
+        setFeedback(res.data?.feedback || []);
+        setStats(res.data?.stats || {});
+      })
+      .catch(e => setError(e.response?.data?.message || 'Failed to load feedback'))
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  useEffect(() => {
+    if (selected?._id && !selectedId) dispatch(setSelectedWorkshop(selected._id));
+  }, [selected?._id, selectedId, dispatch]);
 
   const handleSelect = (id) => {
     dispatch(setSelectedWorkshop(id));
-    dispatch(fetchWorkshopFeedback(id));
   };
 
-  const filtered = feedback.filter(f => {
+  const scopedFeedback = selected?._id
+    ? feedback.filter(f => String(f.workshopId?._id || f.workshopId) === String(selected._id))
+    : feedback;
+
+  const filtered = scopedFeedback.filter(f => {
     const q = search.trim().toLowerCase();
     const matchQ = !q || (f.studentId?.name || '').toLowerCase().includes(q) || (f.comment || '').toLowerCase().includes(q);
     const matchR = fRating === 'all' || f.rating === Number(fRating);
     return matchQ && matchR;
   });
 
-  const dist = stats.dist || [5,4,3,2,1].map(star => ({ star, count: feedback.filter(f => f.rating === star).length }));
-  const total = stats.total || feedback.length;
+  const dist = stats.dist || [5,4,3,2,1].map(star => ({ star, count: scopedFeedback.filter(f => f.rating === star).length }));
+  const total = scopedFeedback.length;
+  const avgRating = total
+    ? Number((scopedFeedback.reduce((a, f) => a + (f.rating || 0), 0) / total).toFixed(1))
+    : (stats.avgRating || 0);
 
   return (
     <div style={S.page}>
@@ -78,14 +99,22 @@ export default function WorkshopFeedback() {
         <WorkshopSelector workshops={workshops} selectedId={selected?._id} onSelect={handleSelect} />
       </PageHeader>
 
+      {error && (
+        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '10px 16px', marginBottom: 16, color: '#b91c1c', fontSize: 13 }}>
+          {error}
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 14, marginBottom: 24 }}>
-        <KPICard title="Avg Rating"     value={stats.avgRating ? `${stats.avgRating} ★` : '—'} icon="star"        accent="#d97706" sub="Out of 5.0" />
-        <KPICard title="Responses"      value={total}                                            icon="message"     accent="#6366f1" sub="Total submitted" />
+        <KPICard title="Avg Rating"     value={avgRating ? `${avgRating} ★` : '—'} icon="star"        accent="#d97706" sub="Out of 5.0" />
+        <KPICard title="Responses"      value={total}                                            icon="message"     accent="#6366f1" sub={selected ? 'This workshop' : 'All workshops'} />
         <KPICard title="Trainer Rating" value={stats.avgTrainer ? `${stats.avgTrainer} ★` : '—'} icon="chalkboard" accent="#7c3aed" sub="Your score" />
         <KPICard title="5 Star"         value={dist.find(d => d.star === 5)?.count ?? 0}         icon="star-filled" accent="#16a34a" />
       </div>
 
-      {!selected ? <Empty icon="⭐" msg="Select a workshop to view feedback." /> : (
+      {!selected ? <Empty icon="⭐" msg="Select a workshop to view feedback." /> : loading ? (
+        <Empty icon="⏳" msg="Loading feedback…" />
+      ) : (
         <>
           {/* Charts row */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
@@ -145,7 +174,7 @@ export default function WorkshopFeedback() {
                 <tbody>
                   {filtered.length === 0 ? (
                     <tr><td colSpan={5} style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>
-                      {feedback.length === 0 ? 'No feedback submitted yet.' : 'No feedback matches your filters.'}
+                      {scopedFeedback.length === 0 ? 'No feedback submitted yet for this workshop.' : 'No feedback matches your filters.'}
                     </td></tr>
                   ) : filtered.map((f, i) => (
                     <tr key={f._id} className="ws-row" style={{ background: i % 2 ? '#fafafa' : '#fff' }}>

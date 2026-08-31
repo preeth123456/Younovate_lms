@@ -12,7 +12,7 @@ const WorkshopBatch = require('../models/WorkshopBatch');
 const User     = require('../models/User');
 const { protect, authorize } = require('../middleware/auth');
 const { sendEmail, workshopApprovedTemplate, loginCredentialsTemplate } = require('../utils/emailUtils');
-const { resolveRecordingPlayback } = require('../utils/recordingStorage');
+const { resolveRecordingPlayback, resolveRecordingPlaybackAsync } = require('../utils/recordingStorage');
 const { rejectPastDate, rejectPastDateTime } = require('../utils/dateTimeValidation');
 
 const router = express.Router();
@@ -771,9 +771,9 @@ router.get('/admin/recordings', protect, authorize('admin'), async (req, res) =>
       const trMap = {};
       trainers.forEach(t => { trMap[t._id.toString()] = t; });
 
-      recordings = recordings.map(r => {
+      recordings = await Promise.all(recordings.map(async (r) => {
         const s = r.sessionId ? sessMap[r.sessionId.toString()] : null;
-        const { url, playable } = resolveRecordingPlayback(r);
+        const { url, playable } = await resolveRecordingPlaybackAsync(r);
         return {
           ...r,
           url,
@@ -782,7 +782,7 @@ router.get('/admin/recordings', protect, authorize('admin'), async (req, res) =>
           workshopName: s?.workshopBatchId?.workshopId?.title || '',
           trainer: r.trainerId && trMap[r.trainerId.toString()] ? trMap[r.trainerId.toString()] : null,
         };
-      });
+      }));
 
       // Client-side search after enrichment
       if (search) {

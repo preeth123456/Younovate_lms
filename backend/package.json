@@ -19,6 +19,8 @@
     "seedtrainees:force": "node src/scripts/seedTrainees.js --force"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1121.0",
+    "@aws-sdk/s3-request-presigner": "^3.1121.0",
     "@livekit/components-react": "^2.9.21",
     "@livekit/components-styles": "^1.2.0",
     "bcryptjs": "^3.0.3",

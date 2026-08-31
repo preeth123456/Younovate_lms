@@ -13,13 +13,17 @@ function getSessionStartMs(session) {
 
 /**
  * Derive effective status for display/join.
- * Scheduled sessions become live once start time is reached.
- * Completed/cancelled are never overridden.
+ * Persisted completed/cancelled/endedAt always win over time-based rules.
  */
 function effectiveSessionStatus(session, now = Date.now()) {
-  const status = session.status;
+  const status = String(session?.status || '').toLowerCase();
 
-  if (['completed', 'cancelled'].includes(status)) return status;
+  if (status === 'completed' || status === 'cancelled') return status;
+  if (session?.endedAt) return 'completed';
+
+  const endMs = getSessionEndsAtMs(session);
+  if (!Number.isNaN(endMs) && now > endMs) return 'completed';
+
   if (status === 'live' || status === 'ongoing') return 'live';
 
   const startMs = getSessionStartMs(session);
@@ -35,33 +39,56 @@ function applyEffectiveSessionStatus(session, now = Date.now()) {
 }
 
 /**
- * Persist live for scheduled sessions whose start time has arrived.
- * Also migrates legacy awaiting_confirmation rows back to live.
+ * Persist status transitions for sessions in the active window:
+ * - Past end time → completed
+ * - Started (not ended) scheduled → live
+ * Never modifies completed/cancelled sessions.
  */
 async function autoUpdatePastScheduledSessions(Session, filter = {}) {
   const now = Date.now();
   const pending = await Session.find({
-    status: { $in: ['scheduled', 'awaiting_confirmation'] },
+    status: { $in: ['scheduled', 'live', 'awaiting_confirmation'] },
     ...filter,
   }).lean();
 
-  const ids = pending
-    .filter((s) => {
-      const startMs = getSessionStartMs(s);
-      return !Number.isNaN(startMs) && now >= startMs;
-    })
-    .map((s) => s._id);
+  const completeIds = [];
+  const liveIds = [];
 
-  if (ids.length) {
+  for (const s of pending) {
+    const endMs = getSessionEndsAtMs(s);
+    const startMs = getSessionStartMs(s);
+
+    if (s.endedAt || (!Number.isNaN(endMs) && now > endMs)) {
+      completeIds.push(s._id);
+      continue;
+    }
+
+    if (
+      (s.status === 'scheduled' || s.status === 'awaiting_confirmation')
+      && !Number.isNaN(startMs)
+      && now >= startMs
+    ) {
+      liveIds.push(s._id);
+    }
+  }
+
+  if (completeIds.length) {
     await Session.updateMany(
-      { _id: { $in: ids } },
+      { _id: { $in: completeIds } },
+      { $set: { status: 'completed', endedAt: new Date() } }
+    );
+  }
+  if (liveIds.length) {
+    await Session.updateMany(
+      { _id: { $in: liveIds } },
       { $set: { status: 'live', startedAt: new Date() } }
     );
   }
-  return ids.length;
+
+  return completeIds.length + liveIds.length;
 }
 
-/** @deprecated Use autoUpdatePastScheduledSessions — kept for existing imports. */
+/** Workshop sessions — same lifecycle rules as LMS. */
 async function autoCompletePastWorkshopSessions(Session, filter = {}) {
   return autoUpdatePastScheduledSessions(Session, { sessionType: 'WORKSHOP', ...filter });
 }

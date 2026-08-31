@@ -12,7 +12,7 @@ const Interview    = require('../models/Interview');
 const Recording    = require('../models/Recording');
 const LmsFeedback  = require('../models/LmsFeedback');
 const { protect, authorize } = require('../middleware/auth');
-const { resolveRecordingPlayback } = require('../utils/recordingStorage');
+const { resolveRecordingPlayback, resolveRecordingPlaybackAsync } = require('../utils/recordingStorage');
 const { rejectPastDate } = require('../utils/dateTimeValidation');
 const { applyEffectiveBatchStatus } = require('../utils/batchStatusUtils');
 const mongoose = require('mongoose');
@@ -455,10 +455,10 @@ router.get('/workshops/recordings', async (req, res) => {
       sessionMap[s._id.toString()] = s.workshopBatchId?.workshopId?.title || '';
     });
 
-    const enriched = recordings.map(r => {
-      const { url, playable } = resolveRecordingPlayback(r);
+    const enriched = await Promise.all(recordings.map(async (r) => {
+      const { url, playable } = await resolveRecordingPlaybackAsync(r);
       return { ...r, url, playable, workshopName: sessionMap[r.sessionId?._id?.toString()] || '' };
-    });
+    }));
 
     return res.json({ success: true, recordings: enriched, total, page: Number(page) });
   } catch (err) {
@@ -494,7 +494,7 @@ router.get('/workshops/recordings/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Recording not found' });
     }
 
-    const { url, playable } = resolveRecordingPlayback(recording);
+    const { url, playable } = await resolveRecordingPlaybackAsync(recording);
 
     return res.json({ success: true, recording: { ...recording, playable, url } });
   } catch (err) {
@@ -523,8 +523,85 @@ router.get('/workshops/certificates', async (req, res) => {
       .skip((Number(page) - 1) * Number(limit))
       .lean();
 
-    return res.json({ success: true, certificates, total, page: Number(page) });
+    const studentIds = [...new Set(certificates.map((c) => c.studentId?._id || c.studentId).filter(Boolean))];
+    const workshopIds = [...new Set(certificates.map((c) => c.workshopId?._id || c.workshopId).filter(Boolean))];
+
+    const attendances = studentIds.length && workshopIds.length
+      ? await WorkshopAttendance.find({
+          studentId: { $in: studentIds },
+          workshopId: { $in: workshopIds },
+        }).lean()
+      : [];
+
+    const attMap = {};
+    attendances.forEach((a) => {
+      const key = `${a.workshopId}_${a.studentId}`;
+      if (!attMap[key] || (a.attendancePct || 0) > (attMap[key].attendancePct || 0)) {
+        attMap[key] = a;
+      }
+    });
+
+    const enriched = certificates.map((c) => {
+      const wId = String(c.workshopId?._id || c.workshopId || '');
+      const sId = String(c.studentId?._id || c.studentId || '');
+      const attendance = attMap[`${wId}_${sId}`] || null;
+      return {
+        ...c,
+        attendance,
+        score: attendance?.attendancePct ?? 0,
+      };
+    });
+
+    return res.json({ success: true, certificates: enriched, total, page: Number(page) });
   } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST /api/admin/workshops/certificates/:id/issue — generate & issue certificate
+router.post('/workshops/certificates/:id/issue', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid certificate ID' });
+    }
+
+    const cert = await WorkshopCertificate.findById(req.params.id);
+    if (!cert) return res.status(404).json({ success: false, message: 'Certificate not found' });
+    if (!['Eligible', 'Issued'].includes(cert.status)) {
+      return res.status(400).json({ success: false, message: 'Student is not eligible for certificate issuance' });
+    }
+
+    const certificateNo = cert.certificateNo
+      || `CERT-${String(cert.workshopId).slice(-6).toUpperCase()}-${String(cert.studentId).slice(-6).toUpperCase()}-${Date.now()}`;
+
+    const updated = await WorkshopCertificate.findByIdAndUpdate(
+      cert._id,
+      {
+        status: 'Issued',
+        certificateNo,
+        issuedDate: cert.issuedDate || new Date(),
+        issuedBy: req.user._id,
+      },
+      { new: true }
+    )
+      .populate('studentId', 'name email')
+      .populate('workshopId', 'title date')
+      .populate('issuedBy', 'name')
+      .lean();
+
+    const attendance = await WorkshopAttendance.findOne({
+      workshopId: cert.workshopId,
+      studentId: cert.studentId,
+    }).sort({ attendancePct: -1 }).lean();
+
+    return res.json({
+      success: true,
+      certificate: { ...updated, attendance, score: attendance?.attendancePct ?? 0 },
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(409).json({ success: false, message: 'Certificate number already exists' });
+    }
     return res.status(500).json({ success: false, message: err.message });
   }
 });

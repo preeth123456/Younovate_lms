@@ -108,6 +108,7 @@ export default function TraineeDashboard() {
   if (status === 'loading' && !data) return <div style={{ padding: 32 }}>Loading...</div>;
 
   const liveSessions     = sessions.filter(s => s.status === 'live');
+  const completedSessions = sessions.filter(s => s.status === 'completed');
   const upcomingSessions = sessions.filter(s => {
     if (s.status !== 'scheduled') return false;
     const endsAt = new Date(s.scheduledAt).getTime() + (s.durationMinutes || 60) * 60000;
@@ -183,6 +184,24 @@ export default function TraineeDashboard() {
           </div>
         ))}
       </div>
+
+      {/* ── Completed Sessions ── */}
+      {completedSessions.length > 0 && (
+        <div style={card}>
+          <h3 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 700, color: C.green }}>✅ Completed Sessions</h3>
+          {completedSessions.map(s => (
+            <div key={s._id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${C.border}` }}>
+              <div>
+                <p style={{ margin: 0, fontWeight: 600, color: C.text1 }}>{s.title}</p>
+                <p style={{ margin: 0, fontSize: 12, color: C.text3 }}>
+                  {s.workshopBatchId?.workshopId?.title || ''} · {s.trainerId?.name || ''}
+                </p>
+              </div>
+              <StatusPill status="completed" />
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Upcoming Sessions ── */}
       <div style={card}>

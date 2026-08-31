@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
+import WatchRecordingButton from '../../components/recording/WatchRecordingButton';
 
 import {
   fetchSessions,
@@ -277,6 +278,7 @@ const Dropdown = ({ value, onChange, disabled, placeholder, children }) => (
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const SessionDayModal = ({ day, sessions, onClose, onScheduleHere }) => {
+  const authToken = useSelector(s => s.auth?.token || '');
   const dayKey   = toDateInput(day);
   const editable = isEditableDay(day);
 
@@ -401,7 +403,13 @@ const SessionDayModal = ({ day, sessions, onClose, onScheduleHere }) => {
                       ) : null;
                     })}
                     {s.recordingUrl && (
-                      <a href={s.recordingUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.78rem', color: '#dc2626', textDecoration: 'none', fontWeight: 600 }}>▶ Recording</a>
+                      <WatchRecordingButton
+                        sessionId={s._id}
+                        token={authToken}
+                        workshop={s.sessionType === 'WORKSHOP'}
+                        label="▶ Recording"
+                        style={{ background: 'transparent', color: '#dc2626', padding: 0, fontSize: '0.78rem' }}
+                      />
                     )}
                   </div>
                 )}

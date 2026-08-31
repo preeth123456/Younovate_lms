@@ -18,13 +18,36 @@ function isEnrolledInLmsSession(session, user) {
   return inBatch || inTrainees;
 }
 
+const LMS_ATTENDED_QUERY = {
+  $or: [
+    { joinedAt: { $exists: true, $ne: null } },
+    { status: { $in: ['present', 'late', 'partial'] } },
+  ],
+};
+
+const WORKSHOP_ATTENDED_QUERY = {
+  $or: [
+    { joinTime: { $exists: true, $ne: null } },
+    { attendanceStatus: { $in: ['Present', 'Late', 'Partial'] } },
+  ],
+};
+
 /** LMS: attended the live session (attendance record). */
 async function hasLmsAttendance(Attendance, sessionId, userId) {
-  const att = await Attendance.findOne({ session: sessionId, trainee: userId })
+  const att = await Attendance.findOne({ session: sessionId, trainee: userId, ...LMS_ATTENDED_QUERY })
     .select('joinedAt status')
     .lean();
-  if (!att) return false;
-  return !!att.joinedAt || ['present', 'late', 'partial'].includes(att.status);
+  return !!att;
+}
+
+/** Session IDs where the trainee has LMS attendance. */
+async function getLmsAttendedSessionIds(Attendance, userId) {
+  return Attendance.find({ trainee: userId, ...LMS_ATTENDED_QUERY }).distinct('session');
+}
+
+/** Session IDs where the trainee has workshop attendance. */
+async function getWorkshopAttendedSessionIds(WorkshopAttendance, userId) {
+  return WorkshopAttendance.find({ studentId: userId, ...WORKSHOP_ATTENDED_QUERY }).distinct('sessionId');
 }
 
 /** LMS participant = enrolled OR has attendance for the session. */
@@ -51,11 +74,10 @@ async function isWorkshopBatchMember(batch, userId) {
 
 /** Workshop: joined the session (attendance record). */
 async function hasWorkshopAttendance(WorkshopAttendance, sessionId, userId) {
-  const att = await WorkshopAttendance.findOne({ sessionId, studentId: userId })
+  const att = await WorkshopAttendance.findOne({ sessionId, studentId: userId, ...WORKSHOP_ATTENDED_QUERY })
     .select('joinTime attendanceStatus')
     .lean();
-  if (!att) return false;
-  return !!att.joinTime || ['Present', 'Late', 'Partial'].includes(att.attendanceStatus);
+  return !!att;
 }
 
 /** Workshop participant = batch member OR has session attendance. */
@@ -107,9 +129,13 @@ function optionalRatings({ trainerRating, contentRating, audioRating, videoRatin
 module.exports = {
   idStr,
   isEnrolledInLmsSession,
+  hasLmsAttendance,
   isLmsParticipant,
+  getLmsAttendedSessionIds,
   isWorkshopBatchMember,
+  hasWorkshopAttendance,
   isWorkshopParticipant,
+  getWorkshopAttendedSessionIds,
   getWorkshopBatchIdsForUser,
   syncWorkshopStudent,
   optionalRatings,

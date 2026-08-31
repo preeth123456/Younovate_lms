@@ -10,6 +10,17 @@
 #   NODE_ENV:        production
 #   RESEND_API_KEY:  your Resend API key (recommended for email)
 #   RESEND_FROM:     verified sender, e.g. Younovate Labs <noreply@younovate.in>
+#
+# LiveKit Cloud + S3 recording (set in Render dashboard → Environment):
+#   LIVEKIT_URL=wss://your-project.livekit.cloud
+#   LIVEKIT_API_KEY=...
+#   LIVEKIT_API_SECRET=...
+#   PUBLIC_API_URL=https://your-api.onrender.com
+#   USE_S3_RECORDING=true
+#   S3_BUCKET=lms-recordings-prod
+#   AWS_REGION=ap-south-1
+#   AWS_ACCESS_KEY_ID=...        (secret — do not commit)
+#   AWS_SECRET_ACCESS_KEY=...    (secret — do not commit)
 
 services:
   - type: web
@@ -21,3 +32,13 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: USE_S3_RECORDING
+        value: "true"
+      - key: S3_BUCKET
+        value: lms-recordings-prod
+      - key: AWS_REGION
+        value: ap-south-1
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false

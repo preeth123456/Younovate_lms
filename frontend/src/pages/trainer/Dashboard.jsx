@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import axios from 'axios';
 import { API_BASE_URL } from '../../config/api';
+import WatchRecordingButton from '../../components/recording/WatchRecordingButton';
 
 // ── LiveKit (third-party real-time video) ─────────────────────────────────────
 import { LiveKitRoom, VideoConference } from '@livekit/components-react';
@@ -70,12 +71,16 @@ const sessionStartMs = (s) => {
   return Number.isNaN(ms) ? 0 : ms;
 };
 
-/** Match backend sessionStatusUtils — live once scheduled start time is reached. */
+/** Match backend sessionStatusUtils — persisted end state wins over time-based rules. */
 const effectiveSessionStatus = (s) => {
-  const status = s.status;
-  if (['completed', 'cancelled'].includes(status)) return status;
-  if (status === 'live' || status === 'ongoing') return 'live';
+  const status = String(s?.status || '').toLowerCase();
+  if (status === 'completed' || status === 'cancelled') return status;
+  if (s?.endedAt) return 'completed';
   const start = sessionStartMs(s);
+  const durMs = (s?.durationMinutes || 60) * 60 * 1000;
+  const endMs = start ? start + durMs : 0;
+  if (endMs && Date.now() > endMs) return 'completed';
+  if (status === 'live' || status === 'ongoing') return 'live';
   if (start && Date.now() >= start) return 'live';
   return 'scheduled';
 };
@@ -566,11 +571,11 @@ const SessionCard = ({ session, isLive }) => {
               {completed ? 'Completed' : 'Cancelled'}
             </span>
             {completed && session.recordingUrl && (
-              <a
-                href={session.recordingUrl} target="_blank" rel="noreferrer"
-                style={{ background: '#1e293b', color: '#fff', textDecoration: 'none', padding: '6px 14px', borderRadius: 7, fontSize: '0.78rem', fontWeight: 600 }}>
-                ▶ Watch recording
-              </a>
+              <WatchRecordingButton
+                sessionId={session._id}
+                token={authToken}
+                workshop={session.sessionType === 'WORKSHOP'}
+              />
             )}
           </>
         ) : (

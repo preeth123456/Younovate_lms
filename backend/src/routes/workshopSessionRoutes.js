@@ -13,7 +13,7 @@ const { WorkshopPublicRegistration, WorkshopAttendance, WorkshopCertificate } = 
 const { protect, authorize } = require('../middleware/auth');
 const { generateLiveKitToken, roomNameFor, LIVEKIT_URL, startRecording, stopRecording, roomService } = require('../services/livekitService');
 const { classifyAttendance, finalizeAttendanceOnEnd, finalizeWorkshopAttendanceOnEnd } = require('../utils/attendanceUtils');
-const { reconcileRecordingByEgressId, defaultRecordingStorage } = require('../utils/recordingStorage');
+const { reconcileRecordingByEgressId, defaultRecordingStorage, resolveRecordingPlaybackAsync, recordingSourceFromSession } = require('../utils/recordingStorage');
 const { rejectPastDateTime } = require('../utils/dateTimeValidation');
 const { isWorkshopParticipant, syncWorkshopStudent } = require('../utils/participantValidation');
 const { emitToRole, emitToSession } = require('../services/socketService');
@@ -201,7 +201,7 @@ router.get('/:id', protect, authorize('admin', 'trainer'), async (req, res) => {
       return res.status(403).json({ success: false, message: 'Forbidden' });
 
     const reconciled = await reconcileProcessingSessionRecording(session);
-    return res.json({ success: true, session: reconciled });
+    return res.json({ success: true, session: applyEffectiveSessionStatus(reconciled) });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -274,10 +274,9 @@ router.post('/:id/start', protect, authorize('trainer'), async (req, res) => {
     const scheduledMs = new Date(session.scheduledAt).getTime();
     const sessionEndMs = scheduledMs + (session.durationMinutes || 60) * 60000;
 
-    // Block if current time is before the join window opens
-    const joinableFromMs = scheduledMs - (session.joinBeforeMinutes || 0) * 60000;
-    if (now < joinableFromMs) {
-      const minsUntilStart = Math.ceil((joinableFromMs - now) / 60000);
+    // Block if current time is before the scheduled start time
+    if (now < scheduledMs) {
+      const minsUntilStart = Math.ceil((scheduledMs - now) / 60000);
       return res.status(409).json({
         success: false,
         message: `Session cannot start yet. It opens in approximately ${minsUntilStart} minute(s).`,
@@ -295,8 +294,8 @@ router.post('/:id/start', protect, authorize('trainer'), async (req, res) => {
       });
     }
 
-    // Block if session is already completed
-    if (session.status === 'completed') {
+    // Block if session is already completed or was manually ended
+    if (session.status === 'completed' || session.endedAt) {
       return res.status(409).json({
         success: false,
         message: 'This session has already ended and cannot be restarted.',
@@ -404,6 +403,11 @@ router.post('/:id/end', protect, authorize('trainer'), async (req, res) => {
     session.endedAt = endedAt;
     await session.save();
 
+    try {
+      const room = session.roomName || roomNameFor(session._id);
+      if (room) await roomService.deleteRoom(room);
+    } catch (_) {}
+
     if (reconcileEgressId) {
       try {
         const reconciled = await reconcileRecordingByEgressId(reconcileEgressId, { maxAttempts: 15, delayMs: 2000, markFailed: true });
@@ -462,11 +466,17 @@ router.post('/:id/end', protect, authorize('trainer'), async (req, res) => {
       });
       emitToRole('trainee', 'session:status', {
         sessionId: session._id,
+        id: session._id,
         status: 'completed',
       });
     } catch (_) {}
 
-    return res.json({ success: true, message: 'Workshop session ended', session, endedAt });
+    return res.json({
+      success: true,
+      message: 'Workshop session ended',
+      session: applyEffectiveSessionStatus(session.toObject ? session.toObject() : session),
+      endedAt,
+    });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -487,6 +497,14 @@ router.post('/:id/join', protect, async (req, res) => {
     const session = await Session.findOne({ _id: req.params.id, sessionType: 'WORKSHOP' });
     if (!session) return res.status(404).json({ success: false, message: 'Workshop session not found' });
 
+    if (session.status === 'completed' || session.endedAt) {
+      return res.status(409).json({
+        success: false,
+        message: 'This session has ended and cannot be joined',
+        status: 'completed',
+      });
+    }
+
     const role = req.user.role;
 
     // Trainer must own the session
@@ -504,6 +522,12 @@ router.post('/:id/join', protect, async (req, res) => {
       const isStudent = await isWorkshopParticipant(batch, session, req.user._id, WorkshopAttendance);
       if (!isStudent) return res.status(403).json({ success: false, message: 'You are not a participant of this session' });
       await syncWorkshopStudent(session.workshopBatchId, req.user._id, WorkshopBatch);
+    }
+
+    const now = Date.now();
+    const scheduledMs = new Date(session.scheduledAt).getTime();
+    if (now < scheduledMs) {
+      return res.status(409).json({ success: false, message: 'Session is not joinable at this time', status: session.status });
     }
 
     if (!session.canJoin())
@@ -972,6 +996,40 @@ router.post('/:id/recording/stop', protect, authorize('trainer'), async (req, re
       recordingStatus: finalRecordingStatus,
       durationSeconds,
     });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/workshop-sessions/:id/recording/playback  [trainer/admin]
+router.get('/:id/recording/playback', protect, authorize('trainer', 'admin'), async (req, res) => {
+  try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid session ID' });
+    }
+    const filter = { _id: req.params.id, sessionType: 'WORKSHOP' };
+    if (req.user.role === 'trainer') filter.trainerId = req.user._id;
+    const session = await Session.findOne(filter).lean();
+    if (!session) {
+      return res.status(404).json({ success: false, message: 'Workshop session not found' });
+    }
+    if (!session.recordingUrl && session.recordingStatus !== 'available') {
+      return res.status(404).json({ success: false, message: 'No recording available for this session' });
+    }
+
+    const recordingDoc = await Recording.findOne({ sessionId: session._id, status: 'completed' })
+      .sort({ createdAt: -1 })
+      .lean();
+    const source = recordingDoc || recordingSourceFromSession(session);
+    if (!source) {
+      return res.status(404).json({ success: false, message: 'Recording not found' });
+    }
+
+    const { url, playable } = await resolveRecordingPlaybackAsync(source);
+    if (!playable || !url) {
+      return res.status(404).json({ success: false, message: 'Recording file is not available for playback' });
+    }
+    return res.json({ success: true, url, playable, expiresIn: 3600 });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }

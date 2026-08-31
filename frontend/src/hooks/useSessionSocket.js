@@ -20,8 +20,13 @@ export function useSessionSocket({ sessionId, token, onSessionEnded, onRecording
     });
 
     if (onSessionEnded) {
-      socket.on('session:ended', onSessionEnded);
+      socket.on('session:ended', (data) => {
+        const sid = String(data?.sessionId || data?.id || '');
+        if (!sid || sid === String(sessionId)) onSessionEnded(data);
+      });
       socket.on('session:status', (data) => {
+        const sid = String(data?.sessionId || data?.id || '');
+        if (!sid || sid !== String(sessionId)) return;
         if (data?.status === 'completed' || data?.status === 'ended') onSessionEnded(data);
       });
     }

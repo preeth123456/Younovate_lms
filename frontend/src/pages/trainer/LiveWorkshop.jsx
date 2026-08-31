@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import axios from 'axios';
 import { API_BASE_URL } from '../../config/api';
@@ -54,13 +54,20 @@ export default function LiveWorkshop() {
   const ATTENDANCE_OPTIONS = ['Present', 'Late', 'Partial', 'Absent'];
 
   const selected = workshops.find(w => w._id === selectedId) || workshops[0] || null;
-
-  // Find the scheduled/live session for the selected workshop batch
   const batchId = selected?.batchId;
-  const workshopSession = allSessions.find(s => {
-    const sid = s.workshopBatchId?._id || s.workshopBatchId;
-    return sid && batchId && sid.toString() === batchId.toString();
-  }) || null;
+
+  // Prefer live session, then most recently completed, then upcoming
+  const workshopSession = useMemo(() => {
+    if (!batchId || !allSessions.length) return null;
+    const batchSessions = allSessions.filter(s => {
+      const sid = s.workshopBatchId?._id || s.workshopBatchId;
+      return sid && batchId && sid.toString() === batchId.toString();
+    });
+    if (!batchSessions.length) return null;
+    return batchSessions.find(s => s.status === 'live')
+      || batchSessions.find(s => s.status === 'completed')
+      || batchSessions[0];
+  }, [allSessions, batchId]);
 
   const sessionId = workshopSession?._id;
   const sessionStatus = workshopSession?.status || '';
@@ -256,7 +263,8 @@ export default function LiveWorkshop() {
   // ── Session status drives the UI ──────────────────────────────────────
   const isCompleted   = sessionStatus === 'completed';
   const isScheduled   = sessionStatus === 'scheduled';
-  const canStart      = sessionId && isScheduled && !isLive && !isCompleted;
+  const canStart      = sessionId && isScheduled && !isLive && !isCompleted &&
+    new Date(workshopSession?.scheduledAt).getTime() <= Date.now();
 
   const joined    = participants.filter(p => ['Present', 'Partial', 'Late'].includes(p.attendance?.attendanceStatus));
   const notJoined = participants.filter(p => !p.attendance || p.attendance?.attendanceStatus === 'Absent');
@@ -303,7 +311,12 @@ export default function LiveWorkshop() {
                       <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#dc2626', animation: 'pulse 1s infinite' }} /> LIVE
                     </span>
                   )}
-                  <StatusBadge status={sessionStatus || selected.status} />
+                  <StatusBadge status={
+                    sessionStatus === 'live' ? 'Live'
+                      : sessionStatus === 'completed' ? 'Completed'
+                      : sessionStatus === 'scheduled' ? 'Scheduled'
+                      : (selected.status || sessionStatus)
+                  } />
                   <Pill bg="#f1f5f9" color="#475569">{selected.mode}</Pill>
                   {workshopSession && (
                     <Pill bg="#f1f5f9" color="#475569">{workshopSession.durationMinutes} min</Pill>

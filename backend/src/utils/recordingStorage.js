@@ -36,7 +36,7 @@ function useS3Recording() {
 
 function getS3Config() {
   if (!useS3Recording()) return null;
-  const bucket = process.env.S3_BUCKET || process.env.AWS_S3_BUCKET;
+  const bucket = process.env.S3_BUCKET || process.env.S3_BUCKET_NAME || process.env.AWS_S3_BUCKET;
   const region = process.env.S3_REGION || process.env.AWS_REGION;
   const endpoint = process.env.S3_ENDPOINT || '';
   const publicBase = (process.env.S3_PUBLIC_URL_BASE || process.env.AWS_S3_PUBLIC_URL_BASE || '').replace(/\/+$/, '');
@@ -70,6 +70,62 @@ function normalizeS3Key(raw) {
   return String(raw)
     .replace(/^s3:\/\/[^/]+\//, '')
     .replace(/^\/+/, '');
+}
+
+let _s3Client = null;
+
+function getS3Client() {
+  if (_s3Client) return _s3Client;
+  const s3 = getS3Config();
+  if (!s3) return null;
+  const accessKey = process.env.S3_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID;
+  const secretKey = process.env.S3_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+  if (!accessKey || !secretKey) return null;
+  const { S3Client } = require('@aws-sdk/client-s3');
+  const config = {
+    region: s3.region,
+    credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+  };
+  if (s3.endpoint) config.endpoint = s3.endpoint;
+  _s3Client = new S3Client(config);
+  return _s3Client;
+}
+
+/** Extract S3 object key from a Recording doc or session recordingUrl. */
+function extractS3KeyFromRecording(recording) {
+  if (!recording) return '';
+  if (recording.filename) {
+    const fromFilename = normalizeS3Key(recording.filename);
+    if (fromFilename) return fromFilename;
+  }
+  if (!recording.url) return '';
+  if (isLocalRecordingUrl(recording.url)) {
+    return normalizeRelPath(recording.url.replace(`${BASE_RECORDING_URL}/recordings/`, ''));
+  }
+  if (!isHttpUrl(recording.url)) return normalizeS3Key(recording.url);
+  try {
+    const u = new URL(recording.url);
+    let objectPath = u.pathname.replace(/^\//, '');
+    const s3 = getS3Config();
+    if (s3 && objectPath.startsWith(`${s3.bucket}/`)) {
+      objectPath = objectPath.slice(s3.bucket.length + 1);
+    }
+    return normalizeS3Key(objectPath);
+  } catch (_) {
+    return '';
+  }
+}
+
+/** Temporary signed GET URL for private S3 objects (default 1 hour). */
+async function getS3PresignedGetUrl(key, expiresInSeconds = 3600) {
+  const s3 = getS3Config();
+  const client = getS3Client();
+  const normalizedKey = normalizeS3Key(key);
+  if (!s3 || !client || !normalizedKey) return '';
+  const { GetObjectCommand } = require('@aws-sdk/client-s3');
+  const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+  const command = new GetObjectCommand({ Bucket: s3.bucket, Key: normalizedKey });
+  return getSignedUrl(client, command, { expiresIn: expiresInSeconds });
 }
 
 /** Public HTTPS URL for an object key (bucket policy must allow read on recordings/*). */
@@ -395,19 +451,25 @@ function localFileIsPlayable(relPath) {
   return true;
 }
 
+function isRecordingComplete(recording) {
+  return recording.status === 'completed'
+    || recording.status === 'available'
+    || (recording.endedAt && (recording.url || recording.filename));
+}
+
 function resolveRecordingPlayback(recording) {
   const kind = recordingStorageKind(recording);
 
   if (kind === 's3') {
-    const url = recording.url || buildS3PublicUrl(recording.filename);
-    const isComplete = recording.status === 'completed'
-      || recording.status === 'available'
-      || (recording.endedAt && url);
-    return {
-      url,
-      playable: isComplete && !!url,
-      relPath: recording.filename || '',
-    };
+    const key = extractS3KeyFromRecording(recording);
+    const s3 = getS3Config();
+    const isComplete = isRecordingComplete(recording);
+    // Private buckets need presigned URLs via resolveRecordingPlaybackAsync.
+    if (s3?.publicBase) {
+      const url = recording.url || buildS3PublicUrl(key);
+      return { url, playable: isComplete && !!url, relPath: key };
+    }
+    return { url: '', playable: false, relPath: key };
   }
 
   const relPath = resolveRelPath(recording);
@@ -415,6 +477,50 @@ function resolveRecordingPlayback(recording) {
   const url = relPath ? buildRecordingUrl(relPath) : (recording.url || '');
   const playable = relPath ? localFileIsPlayable(relPath) : false;
   return { url, playable, relPath };
+}
+
+/** Authorized playback URL — presigned GET for private S3, local URL for disk storage. */
+async function resolveRecordingPlaybackAsync(recording) {
+  const kind = recordingStorageKind(recording);
+
+  if (kind === 's3') {
+    const key = extractS3KeyFromRecording(recording);
+    const isComplete = isRecordingComplete(recording);
+    if (!isComplete || !key) {
+      return { url: '', playable: false, relPath: key };
+    }
+
+    const s3 = getS3Config();
+    if (s3?.publicBase) {
+      const url = recording.url || buildS3PublicUrl(key);
+      return { url, playable: !!url, relPath: key };
+    }
+
+    try {
+      const url = await getS3PresignedGetUrl(key);
+      return { url, playable: !!url, relPath: key };
+    } catch (err) {
+      console.warn('S3 presign failed:', err.message);
+      return { url: '', playable: false, relPath: key };
+    }
+  }
+
+  return resolveRecordingPlayback(recording);
+}
+
+/** Build a minimal recording-like object from a Session document. */
+function recordingSourceFromSession(session) {
+  if (!session?.recordingUrl) return null;
+  const isS3 = isS3Configured()
+    && isHttpUrl(session.recordingUrl)
+    && !isLocalRecordingUrl(session.recordingUrl);
+  return {
+    url: session.recordingUrl,
+    filename: extractS3KeyFromRecording({ url: session.recordingUrl }),
+    storage: isS3 ? 's3' : 'local',
+    status: session.recordingStatus === 'available' ? 'completed' : session.recordingStatus,
+    sessionId: session._id,
+  };
 }
 
 /**
@@ -629,7 +735,12 @@ module.exports = {
   ensureMp4WebPlayable,
   isMp4WebPlayable,
   readEgressMediaDuration,
+  getS3Client,
+  extractS3KeyFromRecording,
+  getS3PresignedGetUrl,
   resolveRecordingPlayback,
+  resolveRecordingPlaybackAsync,
+  recordingSourceFromSession,
   finalizeRecordingRemote,
   finalizeRecordingOnDisk,
   reconcileRecordingByEgressId,

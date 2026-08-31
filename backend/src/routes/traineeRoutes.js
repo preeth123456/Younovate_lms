@@ -21,9 +21,12 @@ const {
 const { classifyAttendance } = require('../utils/attendanceUtils');
 const { applyEffectiveSessionStatus, autoCompletePastWorkshopSessions } = require('../utils/sessionStatusUtils');
 const {
-  isLmsParticipant,
+  hasLmsAttendance,
   isWorkshopParticipant,
+  hasWorkshopAttendance,
   getWorkshopBatchIdsForUser,
+  getLmsAttendedSessionIds,
+  getWorkshopAttendedSessionIds,
   syncWorkshopStudent,
   optionalRatings,
 } = require('../utils/participantValidation');
@@ -149,26 +152,43 @@ router.get('/dashboard', async (req, res) => {
 
 // GET /api/trainee/sessions?status=
 // LMS sessions ONLY — Workshop sessions served by /api/trainee/workshop-sessions
+// ?forFeedback=1 — completed sessions the trainee attended (feedback eligibility)
 router.get('/sessions', async (req, res) => {
   try {
-    const attendedIds = await Attendance.find({ trainee: req.user._id }).distinct('session');
-    const filter = {
-      $and: [
-        LMS_FILTER,
-        {
-          $or: [
-            ...traineeSessionFilter(req.user).$or,
-            ...(attendedIds.length ? [{ _id: { $in: attendedIds } }] : []),
-          ],
-        },
-        ...(req.query.status ? [{ status: req.query.status }] : []),
-      ],
-    };
+    const forFeedback = req.query.forFeedback === '1' || req.query.forFeedback === 'true';
+    let filter;
+
+    if (forFeedback) {
+      const attendedIds = await getLmsAttendedSessionIds(Attendance, req.user._id);
+      if (!attendedIds.length) return res.json({ success: true, sessions: [] });
+      filter = {
+        $and: [
+          LMS_FILTER,
+          { _id: { $in: attendedIds } },
+          { status: 'completed' },
+        ],
+      };
+    } else {
+      const attendedIds = await Attendance.find({ trainee: req.user._id }).distinct('session');
+      filter = {
+        $and: [
+          LMS_FILTER,
+          {
+            $or: [
+              ...traineeSessionFilter(req.user).$or,
+              ...(attendedIds.length ? [{ _id: { $in: attendedIds } }] : []),
+            ],
+          },
+          ...(req.query.status ? [{ status: req.query.status }] : []),
+        ],
+      };
+    }
+
     const sessions = await Session.find(filter)
       .populate('trainerId', 'name profilePicture')
       .populate('batchId', 'name')
       .sort('-scheduledAt')
-      .limit(50)
+      .limit(forFeedback ? 200 : 50)
       .lean();
 
     const now = Date.now();
@@ -318,14 +338,34 @@ router.get('/workshop-batches', async (req, res) => {
 });
 
 // GET /api/trainee/workshop-sessions
+// ?forFeedback=1 — completed workshop sessions the trainee attended
 router.get('/workshop-sessions', async (req, res) => {
   try {
     const userId = req.user._id;
+    const forFeedback = req.query.forFeedback === '1' || req.query.forFeedback === 'true';
     const batchIds = await getWorkshopBatchIdsForUser(userId, WorkshopBatch);
-    if (batchIds.length === 0) return res.json({ success: true, sessions: [] });
+    const attendedIds = await getWorkshopAttendedSessionIds(WorkshopAttendance, userId);
 
-    const filter = { sessionType: 'WORKSHOP', workshopBatchId: { $in: batchIds } };
-    if (req.query.status) filter.status = req.query.status;
+    let filter;
+    if (forFeedback) {
+      if (!attendedIds.length) return res.json({ success: true, sessions: [] });
+      filter = {
+        sessionType: 'WORKSHOP',
+        _id: { $in: attendedIds },
+        status: 'completed',
+      };
+    } else {
+      const scope = [];
+      if (batchIds.length) scope.push({ workshopBatchId: { $in: batchIds } });
+      if (attendedIds.length) scope.push({ _id: { $in: attendedIds } });
+      if (!scope.length) return res.json({ success: true, sessions: [] });
+
+      filter = {
+        sessionType: 'WORKSHOP',
+        ...(scope.length === 1 ? scope[0] : { $or: scope }),
+      };
+      if (req.query.status) filter.status = req.query.status;
+    }
 
     await autoCompletePastWorkshopSessions(Session, filter);
 
@@ -341,7 +381,7 @@ router.get('/workshop-sessions', async (req, res) => {
       const joinBeforeMs = (withStatus.joinBeforeMinutes || 10) * 60000;
       const endsAtMs = scheduledMs + (withStatus.durationMinutes || 60) * 60000;
       const joinableFromMs = scheduledMs - joinBeforeMs;
-      const canJoin = withStatus.status === 'live' || (withStatus.status === 'scheduled' && now >= joinableFromMs && now <= endsAtMs);
+      const canJoin = withStatus.status === 'live';
       const secondsUntilStart = Math.max(0, Math.round((joinableFromMs - now) / 1000));
       return { ...withStatus, canJoin, secondsUntilStart, endsAt: new Date(endsAtMs).toISOString() };
     });
@@ -366,8 +406,21 @@ router.post('/workshop-sessions/:id/join', async (req, res) => {
 
     await syncWorkshopStudent(session.workshopBatchId, req.user._id, WorkshopBatch);
 
-    if (!session.canJoin())
-      return res.status(409).json({ success: false, message: 'Session is not joinable at this time', status: session.status });
+    const effective = applyEffectiveSessionStatus(session.toObject ? session.toObject() : session);
+    if (effective.status === 'completed') {
+      return res.status(409).json({
+        success: false,
+        message: 'This session has ended and cannot be joined',
+        status: 'completed',
+      });
+    }
+    if (effective.status !== 'live') {
+      return res.status(409).json({
+        success: false,
+        message: 'Session is not live yet',
+        status: effective.status,
+      });
+    }
 
     const roomName = roomNameFor(session._id);
     const token = await generateLiveKitToken(req.user, roomName, { canPublish: true, roomAdmin: false });
@@ -496,14 +549,16 @@ router.post('/workshop-feedback', async (req, res) => {
     // Validate session exists and is completed
     const session = await Session.findOne({ _id: sessionId, sessionType: 'WORKSHOP' }).lean();
     if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
-    if (session.status !== 'completed') {
+    const effective = applyEffectiveSessionStatus(session);
+    if (effective.status !== 'completed') {
       return res.status(400).json({ success: false, message: 'Feedback can only be submitted after session completion' });
     }
 
     const batch = await WorkshopBatch.findById(session.workshopBatchId).lean();
     if (!batch) return res.status(404).json({ success: false, message: 'Batch not found' });
-    const isStudent = await isWorkshopParticipant(batch, session, req.user._id, WorkshopAttendance);
-    if (!isStudent) return res.status(403).json({ success: false, message: 'You are not a participant of this session' });
+    if (!(await hasWorkshopAttendance(WorkshopAttendance, session._id, req.user._id))) {
+      return res.status(403).json({ success: false, message: 'You must attend the session before submitting feedback' });
+    }
 
     await syncWorkshopStudent(session.workshopBatchId, req.user._id, WorkshopBatch);
 
@@ -549,6 +604,7 @@ router.get('/workshop-feedback', async (req, res) => {
     const { WorkshopFeedback } = require('../models/WorkshopModels');
     const feedback = await WorkshopFeedback.find({ studentId: req.user._id })
       .populate('workshopId', 'title date')
+      .populate('sessionId', 'title scheduledAt sessionType')
       .sort({ createdAt: -1 }).lean();
     return res.json({ success: true, feedback });
   } catch (err) {
@@ -584,14 +640,15 @@ router.post('/lms-feedback', async (req, res) => {
     if (!session) {
       return res.status(404).json({ success: false, message: 'Session not found' });
     }
-    if (session.status !== 'completed') {
+    const effective = applyEffectiveSessionStatus(session);
+    if (effective.status !== 'completed') {
       return res.status(400).json({
         success: false,
         message: 'Feedback can only be submitted after session completion',
       });
     }
-    if (!(await isLmsParticipant(session, req.user, Attendance))) {
-      return res.status(403).json({ success: false, message: 'You are not a participant of this session' });
+    if (!(await hasLmsAttendance(Attendance, session._id, req.user._id))) {
+      return res.status(403).json({ success: false, message: 'You must attend the session before submitting feedback' });
     }
     if (!overallRating || overallRating < 1 || overallRating > 5) {
       return res.status(400).json({ success: false, message: 'Overall rating must be between 1 and 5' });
@@ -643,20 +700,21 @@ router.get('/workshop-sessions/:id/join-status', async (req, res) => {
     if (!session) return res.status(404).json({ success: false, message: 'Workshop session not found' });
 
     const now = Date.now();
-    const scheduledMs = new Date(session.scheduledAt).getTime();
-    const endsAtMs = scheduledMs + (session.durationMinutes || 60) * 60000;
-    const joinBeforeMs = (session.joinBeforeMinutes || 10) * 60000;
+    const effective = applyEffectiveSessionStatus(session, now);
+    const scheduledMs = new Date(effective.scheduledAt).getTime();
+    const endsAtMs = scheduledMs + (effective.durationMinutes || 60) * 60000;
+    const joinBeforeMs = (effective.joinBeforeMinutes || 10) * 60000;
     const joinableFromMs = scheduledMs - joinBeforeMs;
 
-    let joinState = 'scheduled';
+    let joinState = effective.status;
     let canJoin = false;
     let message = '';
 
-    if (session.status === 'completed') {
+    if (effective.status === 'completed') {
       joinState = 'completed';
       canJoin = false;
       message = 'Session Completed';
-    } else if (session.status === 'live') {
+    } else if (effective.status === 'live') {
       joinState = 'live';
       canJoin = true;
       message = 'Join Session';
@@ -665,7 +723,7 @@ router.get('/workshop-sessions/:id/join-status', async (req, res) => {
       canJoin = false;
       const secondsUntilStart = Math.ceil((joinableFromMs - now) / 1000);
       message = `Scheduled - Starts in ${Math.floor(secondsUntilStart / 60)}m ${secondsUntilStart % 60}s`;
-    } else if (now >= joinableFromMs && session.status === 'scheduled') {
+    } else if (now >= joinableFromMs && effective.status === 'scheduled') {
       joinState = 'waiting';
       canJoin = false;
       message = 'Waiting for Trainer';
@@ -677,7 +735,7 @@ router.get('/workshop-sessions/:id/join-status', async (req, res) => {
 
     const secondsUntilStart = Math.max(0, Math.ceil((scheduledMs - now) / 1000));
     const secondsUntilEnd = Math.max(0, Math.ceil((endsAtMs - now) / 1000));
-    const isWithinJoinWindow = now >= joinableFromMs && now <= endsAtMs;
+    const isWithinJoinWindow = now >= joinableFromMs && now <= endsAtMs && effective.status === 'live';
 
     return res.json({
       success: true,
@@ -688,11 +746,12 @@ router.get('/workshop-sessions/:id/join-status', async (req, res) => {
       secondsUntilEnd,
       isWithinJoinWindow,
       session: {
-        _id: session._id,
-        status: session.status,
-        scheduledAt: session.scheduledAt,
-        durationMinutes: session.durationMinutes,
-        title: session.title,
+        _id: effective._id,
+        status: effective.status,
+        scheduledAt: effective.scheduledAt,
+        durationMinutes: effective.durationMinutes,
+        title: effective.title,
+        endedAt: effective.endedAt,
       },
     });
    } catch (err) {

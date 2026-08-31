@@ -83,6 +83,7 @@ export default function LiveRoom({
   const [selectedVideo, setSelectedVideo] = useState('');
   const [processingTimedOut, setProcessingTimedOut] = useState(false);
   const [endingSession, setEndingSession] = useState(false);
+  const [sessionEnded, setSessionEnded] = useState(false);
   const processingPollRef = useRef(null);
   const pendingRecordingRef = useRef(null);
   const containerRef = useRef(null);
@@ -173,8 +174,7 @@ export default function LiveRoom({
           }
           applyRecStatus(resolveRecordingUiStatus(sess, pendingRecordingRef.current));
           if (sess?.status === 'completed') {
-            if (onSessionEnd) onSessionEnd({ auto: true });
-            else if (onLeave) onLeave();
+            setSessionEnded(true);
           }
         })
         .catch(() => {});
@@ -224,9 +224,17 @@ export default function LiveRoom({
   }, []);
 
   const handleSessionEndedSocket = useCallback(() => {
-    if (onSessionEnd) onSessionEnd({ ended: true });
-    else if (onLeave) onLeave();
-  }, [onSessionEnd, onLeave]);
+    setSessionEnded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!sessionEnded) return undefined;
+    const timer = setTimeout(() => {
+      if (onSessionEnd) onSessionEnd({ ended: true, auto: true });
+      else if (onLeave) onLeave();
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [sessionEnded, onSessionEnd, onLeave]);
 
   useSessionSocket({
     sessionId,
@@ -337,6 +345,7 @@ export default function LiveRoom({
         await stopActiveRecording();
       }
       await Promise.resolve(onSessionEnd({ ended: true }));
+      if (onLeave) onLeave();
       if (sessionId && authToken) {
         const base = API_BASE_URL;
         const endpoint = sessionType === 'WORKSHOP'
@@ -363,7 +372,7 @@ export default function LiveRoom({
     } finally {
       setEndingSession(false);
     }
-  }, [onSessionEnd, endingSession, recordingState, stopActiveRecording, sessionId, authToken, sessionType]);
+  }, [onSessionEnd, onLeave, endingSession, recordingState, stopActiveRecording, sessionId, authToken, sessionType]);
 
   if (!token || !serverUrl) {
     return (
@@ -375,7 +384,7 @@ export default function LiveRoom({
   }
 
   return (
-    <div ref={containerRef} className="lk-shell" style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: '#0b0f17' }}>
+    <div ref={containerRef} className="lk-shell" style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: '#0b0f17', position: 'relative' }}>
       {/* Header */}
       <div style={styles.header}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -433,13 +442,14 @@ export default function LiveRoom({
       <LiveKitRoom
         token={token}
         serverUrl={serverUrl}
-        connect
+        connect={!sessionEnded}
         video={canPublish}
         audio={canPublish}
         onDisconnected={onDisconnected || onLeave}
         data-lk-theme="default"
         style={{ flex: 1, minHeight: 0, display: 'flex' }}
       >
+        <DisconnectOnEnd ended={sessionEnded} />
         {/* Main video area */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
           <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
@@ -628,9 +638,32 @@ export default function LiveRoom({
         <MediaPermissionHint canPublish={canPublish} />
       </LiveKitRoom>
 
+      {sessionEnded && (
+        <div style={{
+          position: 'absolute', inset: 0, background: 'rgba(15,23,42,.92)', color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50,
+          flexDirection: 'column', gap: 12, textAlign: 'center', padding: 24,
+        }}>
+          <div style={{ fontSize: 40 }}>✅</div>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>Session Ended</h2>
+          <p style={{ margin: 0, color: '#cbd5e1', maxWidth: 420 }}>
+            The trainer has ended this session. You are being disconnected.
+          </p>
+        </div>
+      )}
+
       <style>{styles.css}</style>
     </div>
   );
+}
+
+function DisconnectOnEnd({ ended }) {
+  const room = useRoomContext();
+  useEffect(() => {
+    if (!ended || !room) return;
+    room.disconnect(true);
+  }, [ended, room]);
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -11,10 +11,11 @@ const WorkshopBatch = require('../models/WorkshopBatch');
 const User       = require('../models/User');
 const Recording  = require('../models/Recording');
 const LmsFeedback = require('../models/LmsFeedback');
+const { WorkshopFeedback } = require('../models/WorkshopModels');
 const { protect, authorize } = require('../middleware/auth');
 const sessionCtrl = require('../controllers/sessionController');
 
-const { resolveRecordingPlayback, reconcileRecordingByEgressId, defaultRecordingStorage } = require('../utils/recordingStorage');
+const { resolveRecordingPlayback, resolveRecordingPlaybackAsync, reconcileRecordingByEgressId, defaultRecordingStorage, recordingSourceFromSession } = require('../utils/recordingStorage');
 const { rejectPastDateTime } = require('../utils/dateTimeValidation');
 const { applyEffectiveSessionStatus, autoUpdatePastScheduledSessions } = require('../utils/sessionStatusUtils');
 
@@ -571,6 +572,38 @@ const stopRecordingSession = async (req, res) => {
 router.post('/sessions/:id/recording/start', startRecordingSession);
 router.post('/sessions/:id/recording/stop', stopRecordingSession);
 
+// GET /api/trainer/sessions/:id/recording/playback — presigned URL for authorized trainer
+router.get('/sessions/:id/recording/playback', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid session ID' });
+    }
+    const session = await Session.findOne({ _id: req.params.id, trainerId: req.user._id, ...LMS_FILTER }).lean();
+    if (!session) {
+      return res.status(404).json({ success: false, message: 'Session not found' });
+    }
+    if (!session.recordingUrl && session.recordingStatus !== 'available') {
+      return res.status(404).json({ success: false, message: 'No recording available for this session' });
+    }
+
+    const recordingDoc = await Recording.findOne({ sessionId: session._id, status: 'completed' })
+      .sort({ createdAt: -1 })
+      .lean();
+    const source = recordingDoc || recordingSourceFromSession(session);
+    if (!source) {
+      return res.status(404).json({ success: false, message: 'Recording not found' });
+    }
+
+    const { url, playable } = await resolveRecordingPlaybackAsync(source);
+    if (!playable || !url) {
+      return res.status(404).json({ success: false, message: 'Recording file is not available for playback' });
+    }
+    return res.json({ success: true, url, playable, expiresIn: 3600 });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // GET /api/trainer/recordings — trainer's own recordings
 router.get('/recordings', async (req, res) => {
   try {
@@ -596,10 +629,10 @@ router.get('/recordings', async (req, res) => {
           .lean()
       : recordings;
 
-    const enriched = fresh.map(r => {
-      const { url, playable } = resolveRecordingPlayback(r);
+    const enriched = await Promise.all(fresh.map(async (r) => {
+      const { url, playable } = await resolveRecordingPlaybackAsync(r);
       return { ...r, url, playable };
-    });
+    }));
 
     return res.json({ success: true, recordings: enriched });
   } catch (err) {
@@ -619,6 +652,9 @@ router.get('/recordings/:id', async (req, res) => {
     if (!recording) {
       return res.status(404).json({ success: false, message: 'Recording not found' });
     }
+    if (recording.trainerId?.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
+    }
 
     if (recording.egressId && ['processing', 'active'].includes(recording.status)) {
       try {
@@ -627,7 +663,7 @@ router.get('/recordings/:id', async (req, res) => {
       } catch (_) {}
     }
 
-    const { url, playable } = resolveRecordingPlayback(recording);
+    const { url, playable } = await resolveRecordingPlaybackAsync(recording);
 
     return res.json({ success: true, recording: { ...recording, playable, url } });
   } catch (err) {
@@ -644,6 +680,27 @@ router.get('/lms-feedback', async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
     return res.json({ success: true, feedback });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/trainer/workshop-feedback — all workshop feedback for this trainer
+router.get('/workshop-feedback', async (req, res) => {
+  try {
+    const feedback = await WorkshopFeedback.find({ trainerId: req.user._id })
+      .populate('studentId', 'name email profilePicture')
+      .populate('sessionId', 'title scheduledAt status')
+      .populate('workshopId', 'title date mode')
+      .sort({ createdAt: -1 })
+      .lean();
+    const total = feedback.length;
+    const avgRating = total ? Number((feedback.reduce((a, f) => a + f.rating, 0) / total).toFixed(1)) : 0;
+    const avgTrainer = total
+      ? Number((feedback.filter(f => f.trainerRating).reduce((a, f) => a + (f.trainerRating || 0), 0) / total).toFixed(1))
+      : 0;
+    const dist = [5, 4, 3, 2, 1].map(star => ({ star, count: feedback.filter(f => f.rating === star).length }));
+    return res.json({ success: true, feedback, stats: { total, avgRating, avgTrainer, dist } });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }

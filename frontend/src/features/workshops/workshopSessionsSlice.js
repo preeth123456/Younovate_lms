@@ -236,7 +236,7 @@ const slice = createSlice({
       })
 
       .addCase(endWorkshopSession.fulfilled, (s, a) => {
-        const u = a.payload;
+        const u = a.payload?.session || a.payload;
         if (u?._id) {
           const i = s.sessions.findIndex(x => x._id === u._id);
           if (i !== -1) s.sessions[i] = { ...s.sessions[i], ...u };

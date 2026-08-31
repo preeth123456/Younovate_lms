@@ -95,7 +95,7 @@ function useS3Recording() {
 
 function getS3UploadConfig() {
   if (!useS3Recording()) return null;
-  const bucket = process.env.S3_BUCKET || process.env.AWS_S3_BUCKET;
+  const bucket = process.env.S3_BUCKET || process.env.S3_BUCKET_NAME || process.env.AWS_S3_BUCKET;
   const accessKey = process.env.S3_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID;
   const secretKey = process.env.S3_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
   const region = process.env.S3_REGION || process.env.AWS_REGION;
