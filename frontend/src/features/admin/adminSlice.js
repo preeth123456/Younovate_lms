@@ -277,7 +277,10 @@ export const updateRegistration = createAsyncThunk(
         updateData,
         authHeader(getState)
       );
-      return data.data || data;
+      // Backend may attach an `enrollment` envelope (status → Enrolled LMS flow):
+      // { alreadyEnrolled, emailSent, emailError? }. Surface it alongside the
+      // updated record so the UI can give accurate feedback.
+      return { ...data.data, enrollment: data.enrollment || null };
     } catch (err) {
       return rejectWithValue(
         err.response?.data?.message || 'Failed to update registration.'

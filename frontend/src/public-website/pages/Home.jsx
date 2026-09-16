@@ -203,7 +203,9 @@ export default function Home() {
               </p>
 
               <div className="home-hero-btns" style={{ display: 'flex', gap: 12, marginTop: 22, flexWrap: 'wrap' }}>
+                {/* // Sign Up hidden — account creation is not active right now.
                 <PrimaryButton onClick={() => navigate('/signup')}>Sign Up</PrimaryButton>
+                */}
                 <OutlineButton onClick={() => navigate('/workshops')}>Explore Workshops</OutlineButton>
                 <button
                   onClick={() => navigate('/login')}
@@ -378,6 +380,7 @@ export default function Home() {
                     {c.cta}
                   </button>
                   <button
+                    // Sign Up hidden — account creation is not active right now.
                     onClick={() => navigate('/signup')}
                     style={{
                       padding: '12px 16px',

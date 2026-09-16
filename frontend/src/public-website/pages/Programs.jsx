@@ -120,9 +120,11 @@ export default function Programs() {
               <div style={{ color: '#475569', fontSize: 13, lineHeight: 1.7 }}>Leadership execution, presentations, team projects, capstone deliverables, and management-oriented AI implementation.</div>
             </div>
             <div style={{ display: 'grid', gap: 10 }}>
+              {/* // Sign Up hidden — account creation is not active right now.
               <button onClick={() => navigate('/signup')} style={{ width: '100%', padding: '13px 16px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #1E3A8A, #2563EB)', color: '#fff', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 20px rgba(37,99,235,0.25)' }}>
                 Register for a Program
               </button>
+              */}
               <button onClick={() => navigate('/workshops')} style={{ width: '100%', padding: '13px 16px', borderRadius: 12, border: '1px solid #E2E8F0', background: '#F8FAFC', color: '#0F172A', fontWeight: 700, cursor: 'pointer' }}>
                 Explore Workshops First
               </button>
@@ -148,7 +150,9 @@ export default function Programs() {
           <div style={{ fontSize: 32, fontWeight: 800, color: '#FFFFFF', lineHeight: 1.15, marginBottom: 10 }}>Register and start building portfolio-grade AI projects.</div>
           <p style={{ color: 'rgba(255,255,255,0.80)', lineHeight: 1.8, marginBottom: 20 }}>Sign up for YouVA OS and pick YIEP or YBLP. You'll get workshops, assignments, mentorship, assessments, certificates, and placement support.</p>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {/* // Sign Up hidden — account creation is not active right now.
             <button onClick={() => navigate('/signup')} style={{ padding: '13px 24px', borderRadius: 12, border: 'none', background: '#fff', color: '#1E3A8A', fontWeight: 700, cursor: 'pointer', fontSize: 15 }}>Sign Up</button>
+            */}
             <button onClick={() => navigate('/workshops')} style={{ padding: '13px 24px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.35)', background: 'transparent', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: 15 }}>Explore Workshops</button>
           </div>
         </div>

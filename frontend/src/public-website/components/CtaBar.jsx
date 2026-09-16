@@ -32,12 +32,14 @@ export default function CtaBar({ headline = 'Ready to Start Your AI Journey?' })
       </div>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        {/* // Sign Up hidden — account creation is not active right now.
         <button
           onClick={() => navigate('/signup')}
           style={youvaCTA.primaryStyle}
         >
           Sign Up
         </button>
+        */}
         <button
           onClick={() => navigate('/workshops')}
           style={youvaCTA.secondaryStyle}

@@ -111,7 +111,9 @@ export default function Navbar() {
             ) : (
               <>
                 <Link to="/login" className="ynav-btn-ghost">Login</Link>
+                {/* // Sign Up hidden — account creation is not active right now.
                 <Link to="/signup" className="ynav-btn-outline">Sign Up</Link>
+                */}
                 <button className="ynav-btn-primary" onClick={() => setGetStartedOpen(true)}>
                   Get Started <i className="ti ti-arrow-right" />
                 </button>
@@ -140,7 +142,9 @@ export default function Navbar() {
               ) : (
                 <>
                   <Link to="/login" className="ynav-btn-ghost w-full">Login</Link>
+                  {/* // Sign Up hidden — account creation is not active right now.
                   <Link to="/signup" className="ynav-btn-outline w-full">Sign Up</Link>
+                  */}
                   <button className="ynav-btn-primary w-full" onClick={() => setGetStartedOpen(true)}>Get Started</button>
                 </>
               )}

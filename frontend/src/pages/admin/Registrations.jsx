@@ -207,7 +207,20 @@ export default function AdminRegistrations() {
     try {
       const result = await dispatch(updateRegistration({ id: idString, status }));
       if (updateRegistration.fulfilled.match(result)) {
-        pushToast('success', 'Status updated');
+        const enrollment = result.payload?.enrollment || null;
+        if (status === 'enrolled') {
+          if (enrollment?.alreadyEnrolled) {
+            pushToast('info', 'Trainee already enrolled — no duplicate email sent.');
+          } else if (enrollment?.emailError) {
+            pushToast('warning', `Trainee enrolled, but the credentials email failed: ${enrollment.emailError}`);
+          } else if (enrollment?.emailSent) {
+            pushToast('success', 'Trainee enrolled and credentials email sent.');
+          } else {
+            pushToast('success', 'Trainee enrolled successfully.');
+          }
+        } else {
+          pushToast('success', 'Status updated');
+        }
         dispatch(fetchRegistrations());
       } else {
         pushToast('error', result.payload || 'Failed to update status');

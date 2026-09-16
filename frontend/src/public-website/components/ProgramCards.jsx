@@ -127,6 +127,7 @@ function ProgramCard({ program }) {
 
       {/* CTAs */}
       <div style={{ display: 'flex', gap: 10 }}>
+        {/* // Sign Up hidden — account creation is not active right now.
         <button onClick={() => navigate('/signup')} style={{
           flex: 1, padding: '12px 16px', borderRadius: 12, border: 'none',
           background: meta.gradient, color: '#fff', fontWeight: 700, fontSize: 14,
@@ -138,6 +139,7 @@ function ProgramCard({ program }) {
         >
           Enroll Now
         </button>
+        */}
         <button onClick={() => navigate('/programs')} style={{
           flex: 1, padding: '12px 16px', borderRadius: 12,
           border: '1px solid rgba(255,255,255,0.1)',

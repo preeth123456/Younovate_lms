@@ -196,6 +196,7 @@ export default function About() {
             <div style={{ fontSize: 12, fontWeight: 1000, letterSpacing: '0.08em', color: youvaTheme.colors.accent, textTransform: 'uppercase' }}>Journey Timeline</div>
             <div style={{ marginTop: 10, fontSize: 36, fontWeight: 1000, color: youvaTheme.colors.text }}>From discovery to placement readiness</div>
           </div>
+          {/* // Sign Up hidden — account creation is not active right now.
           <button
             onClick={() => navigate('/signup')}
             style={{
@@ -210,6 +211,7 @@ export default function About() {
           >
             Sign Up
           </button>
+          */}
         </div>
 
         <div style={{ marginTop: 18 }}>

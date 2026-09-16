@@ -153,10 +153,12 @@ export default function LoginPage() {
 
           <p className="yn-signup">
             Don&apos;t have an account?{' '}
+            {/* // Sign Up hidden — account creation is not active right now.
             <button type="button" className="yn-signup-link"
               onClick={() => navigate('/signup')}>
               Sign up
             </button>
+            */}
           </p>
 
         </div>
