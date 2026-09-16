@@ -16,6 +16,8 @@ const { resolveRecordingPlayback, resolveRecordingPlaybackAsync } = require('../
 const { rejectPastDate } = require('../utils/dateTimeValidation');
 const { applyEffectiveBatchStatus } = require('../utils/batchStatusUtils');
 const mongoose = require('mongoose');
+const Notification = require('../models/Notification');
+const { sendEmail, workshopApprovedTemplate, certificateIssuedTemplate } = require('../utils/emailUtils');
 
 const router = express.Router();
 
@@ -594,9 +596,31 @@ router.post('/workshops/certificates/:id/issue', async (req, res) => {
       studentId: cert.studentId,
     }).sort({ attendancePct: -1 }).lean();
 
+    // Send email notification to trainee
+    const score = attendance?.attendancePct ?? 0;
+    if (updated.studentId?.email) {
+      const dashboardUrl = `${process.env.FRONTEND_URL || 'https://younovate.in'}/trainee/certificates`;
+      try {
+        await sendEmail({
+          to: updated.studentId.email,
+          subject: 'YouVA OS – Your Workshop Certificate Has Been Issued',
+          html: certificateIssuedTemplate(
+            updated.studentId.name,
+            updated.workshopId?.title || 'Workshop',
+            updated.certificateNo,
+            score,
+            dashboardUrl
+          ),
+        });
+      } catch (emailErr) {
+        console.error('Certificate email notification failed:', emailErr.message);
+        // Don't fail the certificate issuance if email fails
+      }
+    }
+
     return res.json({
       success: true,
-      certificate: { ...updated, attendance, score: attendance?.attendancePct ?? 0 },
+      certificate: { ...updated, attendance, score },
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -971,6 +995,136 @@ router.get('/attendance', async (req, res) => {
       .sort({ createdAt: -1 });
 
     return res.json({ success: true, records });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WORKSHOP CERTIFICATE WORKFLOW
+// ══════════════════════════════════════════════════════════════════════════════
+
+// POST /api/admin/workshops/certificates/:id/assign-trainer — assign certificate to trainer for review
+router.post('/workshops/certificates/:id/assign-trainer', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid certificate ID' });
+    }
+    const { trainerId } = req.body;
+    if (!trainerId || !mongoose.Types.ObjectId.isValid(trainerId)) {
+      return res.status(400).json({ success: false, message: 'Valid trainerId is required' });
+    }
+
+    const trainer = await User.findById(trainerId).select('name email role').lean();
+    if (!trainer) return res.status(404).json({ success: false, message: 'Trainer not found' });
+    if (trainer.role !== 'trainer') {
+      return res.status(400).json({ success: false, message: 'Selected user is not a trainer' });
+    }
+
+    const cert = await WorkshopCertificate.findById(req.params.id);
+    if (!cert) return res.status(404).json({ success: false, message: 'Certificate not found' });
+    if (cert.status !== 'Issued') {
+      return res.status(400).json({ success: false, message: 'Certificate must be issued before assigning to trainer' });
+    }
+
+    // Verify trainer is assigned to the workshop batch
+    const batch = await WorkshopBatch.findOne({ workshopId: cert.workshopId, trainerId: trainer._id }).lean();
+    if (!batch) {
+      return res.status(400).json({ success: false, message: 'Trainer is not assigned to this workshop batch' });
+    }
+
+    const updated = await WorkshopCertificate.findByIdAndUpdate(
+      cert._id,
+      {
+        assignedTrainerId: trainer._id,
+        assignedAt: new Date(),
+        deliveryStatus: 'assigned_to_trainer',
+      },
+      { new: true }
+    )
+      .populate('studentId', 'name email')
+      .populate('workshopId', 'title date')
+      .populate('assignedTrainerId', 'name email')
+      .populate('issuedBy', 'name')
+      .lean();
+
+    // Create notification for trainer
+    await Notification.create({
+      userId: trainer._id,
+      type: 'certificate_assigned',
+      title: 'Certificate Assigned for Review',
+      message: `A certificate for "${updated.workshopId?.title}" has been assigned to you for review and delivery to ${updated.studentId?.name}.`,
+      relatedEntity: { entityType: 'certificate', entityId: updated._id },
+      actionUrl: `/trainer/certificates?workshop=${updated.workshopId?._id}`,
+    });
+
+    return res.json({ success: true, certificate: updated });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST /api/admin/workshops/certificates/:id/send-to-trainee — Admin can also directly send to trainee (bypass trainer)
+router.post('/workshops/certificates/:id/send-to-trainee', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid certificate ID' });
+    }
+
+    const cert = await WorkshopCertificate.findById(req.params.id);
+    if (!cert) return res.status(404).json({ success: false, message: 'Certificate not found' });
+    if (cert.status !== 'Issued') {
+      return res.status(400).json({ success: false, message: 'Certificate must be issued before sending to trainee' });
+    }
+    if (cert.deliveryStatus === 'sent_to_trainee' || cert.deliveryStatus === 'delivered') {
+      return res.status(400).json({ success: false, message: 'Certificate has already been sent to trainee' });
+    }
+
+    await cert.populate('studentId', 'name email');
+    await cert.populate('workshopId', 'title date');
+
+    const updated = await WorkshopCertificate.findByIdAndUpdate(
+      cert._id,
+      {
+        sentToTraineeAt: new Date(),
+        deliveryStatus: 'sent_to_trainee',
+      },
+      { new: true }
+    )
+      .populate('studentId', 'name email')
+      .populate('workshopId', 'title date')
+      .populate('issuedBy', 'name')
+      .lean();
+
+    // Create notification for trainee
+    await Notification.create({
+      userId: cert.studentId._id,
+      type: 'certificate_received',
+      title: 'Certificate Received',
+      message: `Your certificate for "${updated.workshopId?.title}" has been issued and is now available in your dashboard.`,
+      relatedEntity: { entityType: 'certificate', entityId: updated._id },
+      actionUrl: `/trainee/certificates`,
+    });
+
+    // Send email
+    const dashboardUrl = `${process.env.FRONTEND_URL || 'https://younovate.in'}/trainee/certificates`;
+    try {
+      await sendEmail({
+        to: updated.studentId.email,
+        subject: 'YouVA OS – Your Workshop Certificate Has Been Issued',
+        html: certificateIssuedTemplate(
+          updated.studentId.name,
+          updated.workshopId?.title || 'Workshop',
+          updated.certificateNo,
+          100, // score - could be computed from attendance
+          dashboardUrl
+        ),
+      });
+    } catch (emailErr) {
+      console.error('Certificate email notification failed:', emailErr.message);
+    }
+
+    return res.json({ success: true, certificate: updated });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }

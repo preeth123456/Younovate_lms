@@ -221,4 +221,48 @@ const loginCredentialsTemplate = (name, email, tempPassword, workshopTitle, logi
   </div>
 </div></body></html>`;
 
-module.exports = { sendEmail, otpTemplate, pwChangedTemplate, workshopApprovedTemplate, loginCredentialsTemplate };
+// ── Certificate Issued Notification ──────────────────────────────────────────────
+const certificateIssuedTemplate = (name, workshopTitle, certificateNo, score, dashboardUrl) => `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0A0F1E;font-family:system-ui,sans-serif">
+<div style="max-width:560px;margin:40px auto;background:#111827;border-radius:16px;overflow:hidden;border:1px solid #1e2a3f">
+  <div style="background:#15803d;padding:28px 32px"><h1 style="margin:0;font-size:22px;color:#fff;font-weight:700">Younovate LMS</h1>
+  <p style="margin:4px 0 0;font-size:13px;color:#bbf7d0">Certificate Issued</p></div>
+  <div style="padding:32px">
+    <p style="color:#94a3b8;font-size:15px;margin:0 0 8px">Congratulations ${name}!</p>
+    <p style="color:#94a3b8;font-size:14px;margin:0 0 24px;line-height:1.6">
+      Your workshop certificate has been issued successfully.
+    </p>
+    
+    <div style="background:#1a2235;border:1.5px solid #1e2a3f;border-radius:12px;padding:24px;margin-bottom:28px">
+      <div style="margin-bottom:14px">
+        <span style="color:#64748b;font-size:12px;display:block">Workshop</span>
+        <span style="color:#f1f5f9;font-size:16px;font-weight:600">${workshopTitle}</span>
+      </div>
+      <div style="margin-bottom:14px">
+        <span style="color:#64748b;font-size:12px;display:block">Certificate ID</span>
+        <span style="color:#fbbf24;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px">${certificateNo}</span>
+      </div>
+      <div>
+        <span style="color:#64748b;font-size:12px;display:block">Attendance / Score</span>
+        <span style="color:#10b981;font-size:16px;font-weight:800">${score}%</span>
+      </div>
+    </div>
+    
+    <p style="color:#94a3b8;font-size:14px;margin:0 0 24px;line-height:1.6">
+      Your certificate is now available in your YouVA OS trainee dashboard.
+    </p>
+    
+    <div style="text-align:center;margin-bottom:28px">
+      <a href="${dashboardUrl}" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 32px;border-radius:12px">View Certificate in Dashboard</a>
+    </div>
+    
+    <p style="color:#475569;font-size:12px;margin:0;line-height:1.6">
+      If the button doesn't work, copy this URL into your browser:<br>
+      <span style="color:#818cf8;word-break:break-all">${dashboardUrl}</span>
+    </p>
+  </div>
+  <div style="padding:16px 32px;border-top:1px solid #1e2a3f;text-align:center">
+    <p style="color:#374151;font-size:11px;margin:0">© 2026 Younovate Labs · All rights reserved</p>
+  </div>
+</div></body></html>`;
+
+module.exports = { sendEmail, otpTemplate, pwChangedTemplate, workshopApprovedTemplate, loginCredentialsTemplate, certificateIssuedTemplate };

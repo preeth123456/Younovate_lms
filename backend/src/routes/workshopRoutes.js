@@ -14,6 +14,8 @@ const { protect, authorize } = require('../middleware/auth');
 const { sendEmail, workshopApprovedTemplate, loginCredentialsTemplate } = require('../utils/emailUtils');
 const { resolveRecordingPlayback, resolveRecordingPlaybackAsync } = require('../utils/recordingStorage');
 const { rejectPastDate, rejectPastDateTime } = require('../utils/dateTimeValidation');
+const XLSX = require('xlsx');
+const PDFDocument = require('pdfkit');
 
 const router = express.Router();
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
@@ -936,6 +938,8 @@ router.post('/batches', protect, authorize('admin'), async (req, res) => {
     if (!startDate) return res.status(400).json({ success: false, message: 'Start date is required.' });
     if (!registrationIds || !Array.isArray(registrationIds) || registrationIds.length === 0)
       return res.status(400).json({ success: false, message: 'Select at least one trainee.' });
+    if (!trainerId || !isValidId(trainerId))
+      return res.status(400).json({ success: false, message: 'Valid trainerId is required.' });
 
     // Date validation
     const dateCheck = rejectPastDate(startDate, 'Batch start date');
@@ -961,16 +965,16 @@ router.post('/batches', protect, authorize('admin'), async (req, res) => {
         return res.status(400).json({ success: false, message: 'End time must be later than start time.' });
     }
 
-    // Capacity validation — must be a positive integer
-    let cap = 0;
-    if (capacity !== undefined && capacity !== '' && capacity !== null) {
-      const rawCap = Number(capacity);
-      if (!Number.isInteger(rawCap) || rawCap <= 0)
-        return res.status(400).json({ success: false, message: 'Maximum seats must be a positive whole number.' });
-      cap = rawCap;
+    // Capacity validation — REQUIRED, must be a positive integer
+    if (capacity === undefined || capacity === '' || capacity === null) {
+      return res.status(400).json({ success: false, message: 'Capacity is required.' });
     }
+    const rawCap = Number(capacity);
+    if (!Number.isInteger(rawCap) || rawCap <= 0)
+      return res.status(400).json({ success: false, message: 'Capacity must be a positive whole number.' });
+    const cap = rawCap;
 
-    if (cap > 0 && registrationIds.length > cap)
+    if (registrationIds.length > cap)
       return res.status(400).json({ success: false, message: 'Batch capacity cannot be less than selected trainee count.' });
 
     const workshop = await Workshop.findById(workshopId);
@@ -1014,20 +1018,15 @@ router.post('/batches', protect, authorize('admin'), async (req, res) => {
       .map(r => r.userId.toString());
 
     let resolvedTrainerId = null;
-    let trainerName = (trainer || '').trim();
+    let trainerName = '';
     if (trainerId && isValidId(trainerId)) {
       const trainerUser = await User.findById(trainerId).select('name email role').lean();
       if (!trainerUser) return res.status(404).json({ success: false, message: 'Trainer not found.' });
       if (trainerUser.role !== 'trainer') return res.status(400).json({ success: false, message: 'Selected user is not a trainer.' });
       resolvedTrainerId = trainerUser._id;
       trainerName = trainerUser.name;
-    } else if (trainerName) {
-      const trainerUser = await User.findOne({ role: 'trainer', name: new RegExp(`^${trainerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') })
-        .select('name email role').lean();
-      if (trainerUser) {
-        resolvedTrainerId = trainerUser._id;
-        trainerName = trainerUser.name;
-      }
+    } else {
+      return res.status(400).json({ success: false, message: 'Valid trainerId is required.' });
     }
 
     const batchData = {
@@ -1272,6 +1271,505 @@ router.get('/attendance/admin', protect, authorize('admin'), async (req, res) =>
     return res.status(500).json({ success: false, message: err.message });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /api/workshops/admin/reports — comprehensive workshop reports with date filtering
+// Supports: dateRange (7d, 30d, 3m, 6m, 12m, all), tab (performance, revenue, attendance, registrations, completion, feedback, trainer, top)
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get('/admin/reports', protect, authorize('admin'), async (req, res) => {
+  try {
+    const { dateRange = '6m', tab = 'performance', format, workshopId } = req.query;
+
+    // ── Calculate date filter ───────────────────────────────────────────────
+    const now = new Date();
+    let startDate = null;
+    switch (dateRange) {
+      case '7d': startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
+      case '30d': startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
+      case '3m': startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000); break;
+      case '6m': startDate = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000); break;
+      case '12m': startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000); break;
+      case 'all':
+      default: startDate = null;
+    }
+
+    // Use workshop 'date' field (the actual workshop date) for filtering, not createdAt
+    const dateFilter = startDate ? { date: { $gte: startDate } } : {};
+    const workshopFilter = workshopId && isValidId(workshopId) ? { _id: workshopId } : {};
+    const combinedWorkshopFilter = { ...workshopFilter, ...dateFilter };
+
+    // ── Fetch base data ─────────────────────────────────────────────────────
+    const workshops = await Workshop.find(combinedWorkshopFilter).populate('trainerId', 'name email').lean();
+    const workshopIds = workshops.map(w => w._id);
+
+    const [
+      registrations,
+      feedback,
+      certificates,
+      attendance,
+      batches,
+    ] = await Promise.all([
+      // Filter by workshopId only (workshopIds already filtered by workshop date)
+      WorkshopPublicRegistration.find({ workshopId: { $in: workshopIds } }).lean(),
+      WorkshopFeedback.find({ workshopId: { $in: workshopIds } })
+        .populate('studentId', 'name email').populate('workshopId', 'title').lean(),
+      WorkshopCertificate.find({ workshopId: { $in: workshopIds } })
+        .populate('studentId', 'name email').populate('workshopId', 'title').lean(),
+      WorkshopAttendance.find({ workshopId: { $in: workshopIds } })
+        .populate('studentId', 'name email').populate('workshopId', 'title').populate('sessionId', 'title scheduledAt').lean(),
+      WorkshopBatch.find({ workshopId: { $in: workshopIds } }).populate('trainerId', 'name email').lean(),
+    ]);
+
+    const batchIds = batches.map(b => b._id);
+    const sessions = await Session.find({ sessionType: 'WORKSHOP', workshopBatchId: { $in: batchIds } })
+      .populate('trainerId', 'name email').populate({ path: 'workshopBatchId', populate: { path: 'workshopId', select: 'title date' } }).lean();
+
+    // ── Build lookup maps ───────────────────────────────────────────────────
+    const workshopMap = {};
+    workshops.forEach(w => { workshopMap[w._id.toString()] = w; });
+
+    const trainerWorkshops = {};
+    workshops.forEach(w => {
+      const tid = w.trainerId?._id?.toString() || w.trainerId?.toString();
+      if (tid) {
+        if (!trainerWorkshops[tid]) trainerWorkshops[tid] = [];
+        trainerWorkshops[tid].push(w);
+      }
+    });
+
+    // ── Summary Metrics ─────────────────────────────────────────────────────
+    const totalWorkshops = workshops.length;
+    const totalRegistrations = registrations.length;
+    const approvedRegs = registrations.filter(r => r.registrationStatus === 'Approved').length;
+    const completedWorkshops = workshops.filter(w => w.status === 'Completed').length;
+
+    // Revenue: sum of fee * registrationCount for paid workshops
+    const revenue = workshops
+      .filter(w => w.feeType === 'Paid')
+      .reduce((sum, w) => sum + (w.fee || 0) * (w.registrationCount || 0), 0);
+
+    // Feedback metrics
+    const feedbackCount = feedback.length;
+    const avgRating = feedbackCount > 0
+      ? Number((feedback.reduce((a, f) => a + (f.rating || 0), 0) / feedbackCount).toFixed(1))
+      : 0;
+    const ratingDist = [5, 4, 3, 2, 1].map(star => ({
+      star,
+      count: feedback.filter(f => Math.round(f.rating || 0) === star).length,
+    }));
+
+    // Certificate metrics
+    const totalCertificates = certificates.length;
+    const issuedCerts = certificates.filter(c => c.status === 'Issued').length;
+    const eligibleCerts = certificates.filter(c => c.status === 'Eligible').length;
+    const pendingCerts = certificates.filter(c => c.status === 'Pending').length;
+
+    // Attendance metrics
+    const attendanceRecords = attendance.length;
+    const presentCount = attendance.filter(a => a.attendanceStatus === 'Present').length;
+    const avgAttendancePct = attendanceRecords > 0
+      ? Number((attendance.reduce((a, r) => a + (r.attendancePct || 0), 0) / attendanceRecords).toFixed(1))
+      : 0;
+
+    // Top Workshops by registrations
+    const workshopRegCounts = {};
+    registrations.forEach(r => {
+      const wid = r.workshopId?.toString();
+      if (wid) workshopRegCounts[wid] = (workshopRegCounts[wid] || 0) + 1;
+    });
+    const topWorkshops = workshops
+      .map(w => ({
+        ...w,
+        registrationCount: workshopRegCounts[w._id.toString()] || w.registrationCount || 0,
+        revenue: w.feeType === 'Paid' ? (w.fee || 0) * (workshopRegCounts[w._id.toString()] || w.registrationCount || 0) : 0,
+      }))
+      .sort((a, b) => b.registrationCount - a.registrationCount)
+      .slice(0, 10);
+
+    // Trainer Performance
+    const trainerPerformance = Object.entries(trainerWorkshops).map(([trainerId, wsList]) => {
+      const trainer = wsList[0]?.trainerId;
+      const wsIds = wsList.map(w => w._id.toString());
+      const trainerRegs = registrations.filter(r => wsIds.includes(r.workshopId?.toString()));
+      const trainerFeedback = feedback.filter(f => wsIds.includes(f.workshopId?._id?.toString() || f.workshopId?.toString()));
+      const trainerCerts = certificates.filter(c => wsIds.includes(c.workshopId?._id?.toString() || c.workshopId?.toString()));
+      const trainerAtt = attendance.filter(a => wsIds.includes(a.workshopId?._id?.toString() || a.workshopId?.toString()));
+      const trainerRevenue = wsList
+        .filter(w => w.feeType === 'Paid')
+        .reduce((sum, w) => sum + (w.fee || 0) * (workshopRegCounts[w._id.toString()] || 0), 0);
+
+      return {
+        trainerId,
+        trainerName: trainer?.name || 'Unknown',
+        trainerEmail: trainer?.email || '',
+        totalWorkshops: wsList.length,
+        totalRegistrations: trainerRegs.length,
+        totalRevenue: trainerRevenue,
+        avgRating: trainerFeedback.length
+          ? Number((trainerFeedback.reduce((a, f) => a + (f.rating || 0), 0) / trainerFeedback.length).toFixed(1))
+          : null,
+        certificatesIssued: trainerCerts.filter(c => c.status === 'Issued').length,
+        avgAttendancePct: trainerAtt.length
+          ? Number((trainerAtt.reduce((a, r) => a + (r.attendancePct || 0), 0) / trainerAtt.length).toFixed(1))
+          : null,
+      };
+    }).sort((a, b) => b.totalRegistrations - a.totalRegistrations);
+
+    // ── Tab-specific data ───────────────────────────────────────────────────
+    let tabData = {};
+    let tabHeaders = [];
+
+    switch (tab) {
+      case 'performance': {
+        tabHeaders = ['Workshop', 'Trainer', 'Mode', 'Status', 'Registrations', 'Revenue', 'Feedback Avg', 'Sessions'];
+        tabData = workshops.map(w => {
+          const wsFeedback = feedback.filter(f => f.workshopId?._id?.toString() === w._id.toString() || f.workshopId?.toString() === w._id.toString());
+          const wsSessions = sessions.filter(s => s.workshopBatchId?.workshopId?._id?.toString() === w._id.toString());
+          return [
+            w.title,
+            w.trainerName || '—',
+            w.mode || '—',
+            w.status || 'Draft',
+            workshopRegCounts[w._id.toString()] || w.registrationCount || 0,
+            w.feeType === 'Paid' ? (w.fee || 0) * (workshopRegCounts[w._id.toString()] || w.registrationCount || 0) : 0,
+            wsFeedback.length ? Number((wsFeedback.reduce((a, f) => a + (f.rating || 0), 0) / wsFeedback.length).toFixed(1)) : '—',
+            wsSessions.length,
+          ];
+        });
+        break;
+      }
+      case 'revenue': {
+        tabHeaders = ['Workshop', 'Fee Type', 'Fee (₹)', 'Registrations', 'Revenue (₹)', 'Status'];
+        tabData = workshops
+          .filter(w => w.feeType === 'Paid')
+          .map(w => [
+            w.title,
+            w.feeType,
+            w.fee || 0,
+            workshopRegCounts[w._id.toString()] || w.registrationCount || 0,
+            (w.fee || 0) * (workshopRegCounts[w._id.toString()] || w.registrationCount || 0),
+            w.status || 'Draft',
+          ]);
+        break;
+      }
+      case 'attendance': {
+        tabHeaders = ['Workshop', 'Session', 'Student', 'Status', 'Join Time', 'Leave Time', 'Duration (min)', 'Attendance %'];
+        tabData = attendance.map(a => [
+          a.workshopId?.title || '—',
+          a.sessionId?.title || '—',
+          a.studentId?.name || '—',
+          a.attendanceStatus || 'Absent',
+          a.joinTime ? new Date(a.joinTime).toLocaleString() : '—',
+          a.leaveTime ? new Date(a.leaveTime).toLocaleString() : '—',
+          a.duration || 0,
+          a.attendancePct || 0,
+        ]);
+        break;
+      }
+      case 'registrations': {
+        tabHeaders = ['Workshop', 'Student', 'Email', 'Status', 'Registration Date', 'Fee Type', 'Fee (₹)'];
+        tabData = registrations.map(r => {
+          const w = workshopMap[r.workshopId?.toString()];
+          return [
+            w?.title || '—',
+            r.fullName,
+            r.email,
+            r.registrationStatus,
+            r.registrationDate ? new Date(r.registrationDate).toLocaleDateString() : '—',
+            w?.feeType || 'Free',
+            w?.feeType === 'Paid' ? (w?.fee || 0) : 0,
+          ];
+        });
+        break;
+      }
+      case 'completion': {
+        tabHeaders = ['Workshop', 'Student', 'Email', 'Attendance %', 'Sessions Attended', 'Total Sessions', 'Certificate Status'];
+        // Group attendance by workshop + student
+        const completionMap = {};
+        attendance.forEach(a => {
+          const wid = a.workshopId?._id?.toString() || a.workshopId?.toString();
+          const sid = a.studentId?._id?.toString() || a.studentId?.toString();
+          if (!wid || !sid) return;
+          const key = `${wid}_${sid}`;
+          if (!completionMap[key]) {
+            completionMap[key] = { workshopId: wid, studentId: sid, attended: 0, totalSessions: 0, pctSum: 0, count: 0 };
+          }
+          completionMap[key].attended += a.attendanceStatus === 'Present' ? 1 : 0;
+          completionMap[key].pctSum += a.attendancePct || 0;
+          completionMap[key].count += 1;
+        });
+        // Get total sessions per workshop
+        const sessionCounts = {};
+        sessions.forEach(s => {
+          const wid = s.workshopBatchId?.workshopId?._id?.toString();
+          if (wid) sessionCounts[wid] = (sessionCounts[wid] || 0) + 1;
+        });
+        tabData = Object.values(completionMap).map(c => {
+          const w = workshopMap[c.workshopId];
+          // Find student name
+          const studentAtt = attendance.find(a =>
+            (a.workshopId?._id?.toString() || a.workshopId?.toString()) === c.workshopId &&
+            (a.studentId?._id?.toString() || a.studentId?.toString()) === c.studentId
+          );
+          const cert = certificates.find(cert =>
+            (cert.workshopId?._id?.toString() || cert.workshopId?.toString()) === c.workshopId &&
+            (cert.studentId?._id?.toString() || cert.studentId?.toString()) === c.studentId
+          );
+          return [
+            w?.title || '—',
+            studentAtt?.studentId?.name || '—',
+            studentAtt?.studentId?.email || '—',
+            c.count > 0 ? Number((c.pctSum / c.count).toFixed(1)) : 0,
+            c.attended,
+            sessionCounts[c.workshopId] || 0,
+            cert?.status || 'Pending',
+          ];
+        });
+        break;
+      }
+      case 'feedback': {
+        tabHeaders = ['Workshop', 'Student', 'Rating', 'Trainer Rating', 'Content Rating', 'Comment', 'Date'];
+        tabData = feedback.map(f => [
+          f.workshopId?.title || '—',
+          f.studentId?.name || '—',
+          f.rating || 0,
+          f.trainerRating || 0,
+          f.contentRating || 0,
+          f.comment || '',
+          f.createdAt ? new Date(f.createdAt).toLocaleDateString() : '—',
+        ]);
+        break;
+      }
+      case 'trainer': {
+        tabHeaders = ['Trainer', 'Email', 'Workshops', 'Registrations', 'Revenue (₹)', 'Avg Rating', 'Certificates Issued', 'Avg Attendance %'];
+        tabData = trainerPerformance.map(t => [
+          t.trainerName,
+          t.trainerEmail,
+          t.totalWorkshops,
+          t.totalRegistrations,
+          t.totalRevenue,
+          t.avgRating ?? '—',
+          t.certificatesIssued,
+          t.avgAttendancePct ?? '—',
+        ]);
+        break;
+      }
+      case 'top': {
+        tabHeaders = ['Rank', 'Workshop', 'Trainer', 'Mode', 'Registrations', 'Capacity', 'Revenue (₹)', 'Status'];
+        tabData = topWorkshops.map((w, i) => [
+          i + 1,
+          w.title,
+          w.trainerName || '—',
+          w.mode || '—',
+          w.registrationCount,
+          w.maxSeats || 0,
+          w.revenue,
+          w.status || 'Draft',
+        ]);
+        break;
+      }
+      default:
+        tabData = workshops.map(w => [w.title, w.trainerName || '—', w.mode || '—', w.status || 'Draft', workshopRegCounts[w._id.toString()] || 0]);
+        tabHeaders = ['Workshop', 'Trainer', 'Mode', 'Status', 'Registrations'];
+    }
+
+    // ── Summary response ────────────────────────────────────────────────────
+    const summary = {
+      totalWorkshops,
+      totalRegistrations,
+      approvedRegistrations: approvedRegs,
+      completedWorkshops,
+      revenue,
+      feedbackCount,
+      avgRating,
+      ratingDist,
+      totalCertificates,
+      issuedCertificates: issuedCerts,
+      eligibleCertificates: eligibleCerts,
+      pendingCertificates: pendingCerts,
+      attendanceRecords,
+      presentCount,
+      avgAttendancePct,
+    };
+
+    // ── Handle exports ──────────────────────────────────────────────────────
+    if (format === 'excel') {
+      return generateExcelReport(res, summary, tabData, tabHeaders, tab, dateRange);
+    }
+    if (format === 'csv') {
+      return generateCSVReport(res, tabData, tabHeaders, tab, dateRange);
+    }
+    if (format === 'pdf') {
+      return generatePDFReport(res, summary, tabData, tabHeaders, tab, dateRange);
+    }
+
+    return res.json({
+      success: true,
+      summary,
+      tabData,
+      tabHeaders,
+      topWorkshops,
+      trainerPerformance,
+      dateRange,
+      tab,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Workshop reports error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── Export helper functions ────────────────────────────────────────────────
+
+function generateExcelReport(res, summary, tabData, tabHeaders, tab, dateRange) {
+  const wb = XLSX.utils.book_new();
+
+  // Summary sheet
+  const summaryRows = [
+    ['YouVA OS - Workshop Report'],
+    ['Report Type:', tab],
+    ['Date Range:', dateRange],
+    ['Generated:', new Date().toLocaleString()],
+    [''],
+    ['SUMMARY METRICS'],
+    ['Metric', 'Value'],
+    ['Total Workshops', summary.totalWorkshops],
+    ['Total Registrations', summary.totalRegistrations],
+    ['Approved Registrations', summary.approvedRegistrations],
+    ['Completed Workshops', summary.completedWorkshops],
+    ['Total Revenue (₹)', summary.revenue],
+    ['Feedback Responses', summary.feedbackCount],
+    ['Average Rating', summary.avgRating],
+    ['Total Certificates', summary.totalCertificates],
+    ['Issued Certificates', summary.issuedCertificates],
+    ['Eligible Certificates', summary.eligibleCertificates],
+    ['Pending Certificates', summary.pendingCertificates],
+    ['Attendance Records', summary.attendanceRecords],
+    ['Present Count', summary.presentCount],
+    ['Average Attendance %', summary.avgAttendancePct],
+  ];
+  const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+  XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+  // Tab data sheet
+  const tabRows = [tabHeaders, ...tabData];
+  const wsTab = XLSX.utils.aoa_to_sheet(tabRows);
+  XLSX.utils.book_append_sheet(wb, wsTab, tab.charAt(0).toUpperCase() + tab.slice(1));
+
+  // Rating distribution sheet (if feedback tab)
+  if (summary.ratingDist && summary.ratingDist.length) {
+    const ratingRows = [['Rating', 'Count'], ...summary.ratingDist.map(r => [r.star + '★', r.count])];
+    const wsRating = XLSX.utils.aoa_to_sheet(ratingRows);
+    XLSX.utils.book_append_sheet(wb, wsRating, 'Rating Distribution');
+  }
+
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const filename = `YouVAOS_Workshop_Report_${tab}_${dateRange}_${new Date().toISOString().split('T')[0]}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.send(buf);
+}
+
+function generateCSVReport(res, tabData, tabHeaders, tab, dateRange) {
+  const rows = [tabHeaders.join(','), ...tabData.map(row =>
+    row.map(cell => {
+      const str = String(cell ?? '').replace(/"/g, '""');
+      return str.includes(',') || str.includes('\n') || str.includes('"') ? `"${str}"` : str;
+    }).join(',')
+  )];
+  const csv = rows.join('\n');
+  const filename = `YouVAOS_Workshop_Report_${tab}_${dateRange}_${new Date().toISOString().split('T')[0]}.csv`;
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.send(csv);
+}
+
+function generatePDFReport(res, summary, tabData, tabHeaders, tab, dateRange) {
+  const doc = new PDFDocument({ margin: 40, size: 'A4', layout: tabData[0]?.length > 6 ? 'landscape' : 'portrait' });
+  const filename = `YouVAOS_Workshop_Report_${tab}_${dateRange}_${new Date().toISOString().split('T')[0]}.pdf`;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  doc.pipe(res);
+
+  // Title
+  doc.fontSize(20).font('Helvetica-Bold').text('YouVA OS', { align: 'center' });
+  doc.moveDown(0.5);
+  doc.fontSize(16).font('Helvetica-Bold').text('Workshop Report', { align: 'center' });
+  doc.moveDown(0.5);
+  doc.fontSize(11).font('Helvetica').text(`Report: ${tab.charAt(0).toUpperCase() + tab.slice(1)} | Date Range: ${dateRange} | Generated: ${new Date().toLocaleString()}`, { align: 'center' });
+  doc.moveDown(1);
+
+  // Summary metrics
+  doc.fontSize(12).font('Helvetica-Bold').text('Summary Metrics');
+  doc.moveDown(0.3);
+  const metrics = [
+    ['Total Workshops', summary.totalWorkshops],
+    ['Total Registrations', summary.totalRegistrations],
+    ['Approved Registrations', summary.approvedRegistrations],
+    ['Completed Workshops', summary.completedWorkshops],
+    ['Total Revenue', `₹${summary.revenue.toLocaleString()}`],
+    ['Feedback Responses', summary.feedbackCount],
+    ['Average Rating', summary.avgRating],
+    ['Total Certificates', summary.totalCertificates],
+    ['Issued Certificates', summary.issuedCertificates],
+    ['Eligible Certificates', summary.eligibleCertificates],
+    ['Attendance Records', summary.attendanceRecords],
+    ['Average Attendance %', summary.avgAttendancePct + '%'],
+  ];
+  const colWidth = (doc.page.width - 80) / 2;
+  metrics.forEach(([label, value]) => {
+    doc.font('Helvetica-Bold').fontSize(10).text(label, { continued: true, width: colWidth });
+    doc.font('Helvetica').fontSize(10).text(String(value), { width: colWidth });
+  });
+  doc.moveDown(1);
+
+  // Tab data table
+  doc.fontSize(12).font('Helvetica-Bold').text(`${tab.charAt(0).toUpperCase() + tab.slice(1)} Data`);
+  doc.moveDown(0.3);
+
+  if (tabData.length === 0) {
+    doc.fontSize(10).font('Helvetica').text('No data available for this report.', { align: 'center' });
+  } else {
+    // Draw table header
+    const colCount = tabHeaders.length;
+    const tableWidth = doc.page.width - 80;
+    const cellWidth = tableWidth / colCount;
+    let y = doc.y;
+
+    // Header row
+    doc.font('Helvetica-Bold').fontSize(8);
+    tabHeaders.forEach((header, i) => {
+      doc.rect(40 + i * cellWidth, y, cellWidth, 20).stroke();
+      doc.text(header, 42 + i * cellWidth, y + 4, { width: cellWidth - 4, align: 'left', ellipsis: true });
+    });
+    y += 20;
+
+    // Data rows
+    doc.font('Helvetica').fontSize(7);
+    tabData.forEach((row, rowIdx) => {
+      if (y > doc.page.height - 60) {
+        doc.addPage();
+        y = 40;
+        // Redraw header on new page
+        doc.font('Helvetica-Bold').fontSize(8);
+        tabHeaders.forEach((header, i) => {
+          doc.rect(40 + i * cellWidth, y, cellWidth, 20).stroke();
+          doc.text(header, 42 + i * cellWidth, y + 4, { width: cellWidth - 4, align: 'left', ellipsis: true });
+        });
+        y += 20;
+        doc.font('Helvetica').fontSize(7);
+      }
+      row.forEach((cell, i) => {
+        doc.rect(40 + i * cellWidth, y, cellWidth, 18).stroke();
+        doc.text(String(cell ?? ''), 42 + i * cellWidth, y + 3, { width: cellWidth - 4, align: 'left', ellipsis: true });
+      });
+      y += 18;
+    });
+  }
+
+  doc.end();
+}
 
 // GET /api/workshops/:id — single workshop (public) — AFTER all named routes
 router.get('/:id', async (req, res) => {

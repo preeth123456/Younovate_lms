@@ -69,7 +69,15 @@ router.get('/dashboard', async (req, res) => {
     ] = await Promise.all([
       Session.find({ ...base, status: { $in: ['scheduled', 'live'] } })
         .populate('trainerId', 'name').sort('scheduledAt').limit(5),
-      Assignment.countDocuments({ batchId: { $in: req.user.batchIds || [] }, status: 'active' }),
+      
+      // Count trainee's pending assignments (not submitted)
+      Assignment.aggregate([
+        { $match: { batchId: { $in: req.user.batchIds || [] }, status: 'active' } },
+        { $unwind: '$submissions' },
+        { $match: { 'submissions.trainee': userId } },
+        { $count: 'count' }
+      ]).then(r => r[0]?.count || 0),
+
       Attendance.countDocuments({ trainee: userId }),
       Attendance.countDocuments({ trainee: userId, status: { $in: ['present', 'late'] } }),
 
@@ -527,6 +535,7 @@ router.get('/workshop-attendance', async (req, res) => {
 router.get('/workshop-certificates', async (req, res) => {
   try {
     const certificates = await WorkshopCertificate.find({ studentId: req.user._id })
+      .populate('studentId', 'name email')
       .populate('workshopId', 'title date mode')
       .sort({ createdAt: -1 }).lean();
     return res.json({ success: true, certificates });
@@ -948,6 +957,7 @@ router.get('/progress', async (req, res) => {
     const lessonCompleted = lessonRows.filter((lp) => lp.status === 'completed').length;
     const lessonTotal = lessonRows.length;
 
+    // Calculate component percentages only when there's actual data
     const courseAvg = courses.length
       ? Math.round(courses.reduce((sum, c) => sum + (c.progressPercent || 0), 0) / courses.length)
       : 0;
@@ -956,10 +966,17 @@ router.get('/progress', async (req, res) => {
       ? Math.round((submittedAssignments / totalAssignments) * 100)
       : 0;
 
-    const parts = [courseAvg, sessionPct, lmsAttendancePct, assignmentPct].filter((p) => p > 0);
-    const overallPercent = parts.length
-      ? Math.round(parts.reduce((a, b) => a + b, 0) / parts.length)
-      : (lessonTotal ? Math.round((lessonCompleted / lessonTotal) * 100) : 0);
+    // Overall completion: average of components that have actual data
+    // If no data at all, return 0 instead of misleading percentage
+    const hasAnyData = courses.length > 0 || totalSessions > 0 || totalAssignments > 0 || lessonTotal > 0 || lmsAttendance.length > 0 || workshopAttendance.length > 0;
+    
+    let overallPercent = 0;
+    if (hasAnyData) {
+      const parts = [courseAvg, sessionPct, lmsAttendancePct, assignmentPct].filter((p) => p > 0);
+      overallPercent = parts.length
+        ? Math.round(parts.reduce((a, b) => a + b, 0) / parts.length)
+        : (lessonTotal ? Math.round((lessonCompleted / lessonTotal) * 100) : 0);
+    }
 
     return res.json({
       success: true,

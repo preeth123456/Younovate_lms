@@ -22,6 +22,8 @@ const {
   WorkshopPublicRegistration,
 } = require('../models/WorkshopModels');
 const { protect, authorize } = require('../middleware/auth');
+const Notification = require('../models/Notification');
+const { sendEmail, certificateIssuedTemplate } = require('../utils/emailUtils');
 
 const router = express.Router();
 router.use(protect, authorize('trainer'));
@@ -381,6 +383,83 @@ router.get('/:id/certificates', async (req, res) => {
     const attendances = await WorkshopAttendance.find({ workshopId: req.params.id, studentId: { $in: studentIds } }).lean();
     const attMap = {}; attendances.forEach(a => { attMap[a.studentId.toString()] = a; });
     return res.json({ success: true, certificates: certificates.map(c => ({ ...c, attendance: attMap[c.studentId?._id?.toString()] || null })) });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// POST /api/trainer/workshops/:id/certificates/:certId/send-to-trainee — Trainer sends certificate to trainee
+// ═══════════════════════════════════════════════════════════════════════════════
+router.post('/:id/certificates/:certId/send-to-trainee', async (req, res) => {
+  try {
+    if (!isValidId(req.params.id)) return res.status(400).json({ success: false, message: 'Invalid workshop ID' });
+    if (!isValidId(req.params.certId)) return res.status(400).json({ success: false, message: 'Invalid certificate ID' });
+
+    const authErr = await assertTrainerOwnsWorkshop(req.params.id, req.user._id);
+    if (authErr) return res.status(authErr.status).json({ success: false, message: authErr.message });
+
+    const cert = await WorkshopCertificate.findById(req.params.certId);
+    if (!cert) return res.status(404).json({ success: false, message: 'Certificate not found' });
+    if (cert.workshopId.toString() !== req.params.id) {
+      return res.status(400).json({ success: false, message: 'Certificate does not belong to this workshop' });
+    }
+    if (cert.status !== 'Issued') {
+      return res.status(400).json({ success: false, message: 'Certificate must be issued before sending to trainee' });
+    }
+    if (cert.deliveryStatus === 'sent_to_trainee' || cert.deliveryStatus === 'delivered') {
+      return res.status(400).json({ success: false, message: 'Certificate has already been sent to trainee' });
+    }
+    // Verify this trainer is assigned to this certificate
+    if (cert.assignedTrainerId && cert.assignedTrainerId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'This certificate is assigned to another trainer' });
+    }
+
+    await cert.populate('studentId', 'name email');
+    await cert.populate('workshopId', 'title date');
+
+    const updated = await WorkshopCertificate.findByIdAndUpdate(
+      cert._id,
+      {
+        sentToTraineeAt: new Date(),
+        deliveryStatus: 'sent_to_trainee',
+      },
+      { new: true }
+    )
+      .populate('studentId', 'name email')
+      .populate('workshopId', 'title date')
+      .populate('issuedBy', 'name')
+      .lean();
+
+    // Create notification for trainee
+    await Notification.create({
+      userId: cert.studentId._id,
+      type: 'certificate_received',
+      title: 'Certificate Received',
+      message: `Your certificate for "${updated.workshopId?.title}" has been sent to you and is now available in your dashboard.`,
+      relatedEntity: { entityType: 'certificate', entityId: updated._id },
+      actionUrl: `/trainee/certificates`,
+    });
+
+    // Send email
+    const dashboardUrl = `${process.env.FRONTEND_URL || 'https://younovate.in'}/trainee/certificates`;
+    try {
+      await sendEmail({
+        to: updated.studentId.email,
+        subject: 'YouVA OS – Your Workshop Certificate Has Been Sent',
+        html: certificateIssuedTemplate(
+          updated.studentId.name,
+          updated.workshopId?.title || 'Workshop',
+          updated.certificateNo,
+          100,
+          dashboardUrl
+        ),
+      });
+    } catch (emailErr) {
+      console.error('Certificate email notification failed:', emailErr.message);
+    }
+
+    return res.json({ success: true, certificate: updated });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }

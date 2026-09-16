@@ -42,6 +42,7 @@ const workshopRoutes     = require('./routes/workshopRoutes');
 const searchRoutes       = require('./routes/searchRoutes');
 const workshopSessionRoutes = require('./routes/workshopSessionRoutes');
 const livekitTokenRoutes = require('./routes/livekit');
+const notificationRoutes = require('./routes/notificationRoutes');
 require('./jobs/autoEndSessions');
 
 const app    = express();
@@ -123,6 +124,7 @@ app.use('/api/subscriptions',  subscriptionRoutes);
 app.use('/api/workshops',      workshopRoutes);
 app.use('/api/search',         searchRoutes);
 app.use('/api/workshop-sessions', workshopSessionRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // ── 404 catch-all ─────────────────────────────────────────────────────────────
 app.use((req, res) =>

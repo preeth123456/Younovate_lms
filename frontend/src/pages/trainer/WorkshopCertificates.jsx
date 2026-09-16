@@ -9,6 +9,9 @@ import {
   selectSelectedWorkshopId,
 } from '../../features/Trainer/trainerWorkshopSlice';
 import { S, Pill, Empty, PageHeader, KPICard, fmtDate, WorkshopSelector } from './workshopShared';
+import axios from 'axios';
+import { API_BASE_URL } from 'utils/apiConfig';
+import toast from 'react-hot-toast';
 
 const CSS = `@keyframes spin{to{transform:rotate(360deg)}} .ws-row:hover{background:#f9fafb!important}`;
 
@@ -21,6 +24,11 @@ export default function WorkshopCertificates() {
 
   const [search,  setSearch]  = useState('');
   const [fStatus, setFStatus] = useState('all');
+  const [busyId, setBusyId] = useState('');
+
+  const API = API_BASE_URL;
+  const token = useSelector(s => s.auth?.token || '');
+  const headers = { Authorization: `Bearer ${token}` };
 
   useEffect(() => { dispatch(fetchTrainerWorkshops()); }, [dispatch]);
 
@@ -55,6 +63,23 @@ export default function WorkshopCertificates() {
     Rejected: ['#fee2e2', '#b91c1c'],
   };
 
+  const sendToTrainee = async (cert) => {
+    setBusyId(cert._id);
+    try {
+      const { data: _data } = await axios.post(
+        `${API}/api/trainer/workshops/${selected._id}/certificates/${cert._id}/send-to-trainee`,
+        {},
+        { headers }
+      );
+      toast.success('Certificate sent to trainee');
+      dispatch(fetchWorkshopCertificates(selected._id));
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to send certificate');
+    } finally {
+      setBusyId('');
+    }
+  };
+
   return (
     <div style={S.page}>
       <style>{CSS}</style>
@@ -79,7 +104,7 @@ export default function WorkshopCertificates() {
       <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: '1 1 220px' }}>
           <i className="ti ti-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontSize: 14 }} />
-          <input style={{ ...S.input, paddingLeft: 32 }} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search student…" />
+          <input style={{ ...S.input, paddingLeft: 32 }} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search student&hellip;" />
         </div>
         <select style={{ ...S.input, flex: '0 0 160px' }} value={fStatus} onChange={e => setFStatus(e.target.value)}>
           <option value="all">All Status</option>
@@ -92,11 +117,11 @@ export default function WorkshopCertificates() {
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
               <thead>
-                <tr>{['Student','Attendance %','Certificate ID','Status','Issue Date','Note'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr>
+                <tr>{['Student','Attendance %','Certificate ID','Status','Issue Date','Action'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={6} style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>
+                  <tr><td colSpan={7} style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>
                     {certificates.length === 0 ? 'No certificate records yet.' : 'No records match your filters.'}
                   </td></tr>
                 ) : filtered.map((c, i) => {
@@ -106,7 +131,7 @@ export default function WorkshopCertificates() {
                   return (
                     <tr key={c._id} className="ws-row" style={{ background: i % 2 ? '#fafafa' : '#fff' }}>
                       <td style={S.td}>
-                        <div style={{ fontWeight: 600, color: '#111827' }}>{c.studentId?.name || '—'}</div>
+                        <div style={{ fontWeight: 600, color: '#111827' }}>{c.studentId?.name || '&mdash;'}</div>
                         <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{c.studentId?.email}</div>
                       </td>
                       <td style={S.td}>
@@ -120,20 +145,36 @@ export default function WorkshopCertificates() {
                       <td style={S.td}>
                         {c.certificateNo
                           ? <span style={{ fontFamily: 'monospace', fontSize: '0.78rem', background: '#f1f5f9', padding: '2px 7px', borderRadius: 5 }}>{c.certificateNo}</span>
-                          : <span style={{ color: '#9ca3af' }}>—</span>}
+                          : <span style={{ color: '#9ca3af' }}>&mdash;</span>}
                       </td>
                       <td style={S.td}><Pill bg={bg} color={color}>{c.status}</Pill></td>
-                      <td style={S.td}>{c.issuedDate ? fmtDate(c.issuedDate) : '—'}</td>
+                      <td style={S.td}>{c.issuedDate ? fmtDate(c.issuedDate) : '&mdash;'}</td>
                       <td style={S.td}>
                         {c.status === 'Eligible'
                           ? <span style={{ fontSize: '0.75rem', color: '#1d4ed8' }}>Awaiting admin issue</span>
                           : c.status === 'Pending'
                           ? <span style={{ fontSize: '0.75rem', color: '#d97706' }}>Attendance &lt; 60%</span>
+                          : c.status === 'Issued' && c.assignedTrainerId && c.assignedTrainerId._id === token && c.deliveryStatus === 'assigned_to_trainer'
+                          ? <button
+                              onClick={() => sendToTrainee(c)}
+                              disabled={busyId === c._id}
+                              style={{
+                                fontSize: '0.75rem', color: '#fff', background: '#16a34a', border: 'none',
+                                padding: '4px 10px', borderRadius: 6, cursor: busyId === c._id ? 'not-allowed' : 'pointer',
+                                display: 'inline-flex', alignItems: 'center', gap: 4, opacity: busyId === c._id ? 0.6 : 1
+                              }}
+                            >
+                              <i className="ti ti-send" style={{ fontSize: 10 }} /> Send to Trainee
+                            </button>
+                          : c.status === 'Issued' && c.deliveryStatus === 'sent_to_trainee'
+                          ? <span style={{ fontSize: '0.75rem', color: '#16a34a' }}>Sent to trainee</span>
+                          : c.status === 'Issued' && c.deliveryStatus === 'delivered'
+                          ? <span style={{ fontSize: '0.75rem', color: '#16a34a' }}>Delivered</span>
                           : c.status === 'Issued' && c.downloadUrl
                           ? <a href={c.downloadUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.75rem', color: '#16a34a', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                               <i className="ti ti-download" style={{ fontSize: 12 }} /> Download
                             </a>
-                          : '—'}
+                          : '&mdash;'}
                       </td>
                     </tr>
                   );
@@ -149,3 +190,6 @@ export default function WorkshopCertificates() {
     </div>
   );
 }
+
+
+

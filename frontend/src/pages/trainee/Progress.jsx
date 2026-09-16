@@ -88,6 +88,10 @@ export default function TraineeProgress() {
     || (progress?.attendance?.lms?.total || 0) > 0
     || (progress?.attendance?.workshop?.total || 0) > 0;
 
+  const courseProgressLabel = o.coursesEnrolled > 0 ? `${o.percent ?? 0}%` : '—';
+  const courseProgressSub = o.coursesEnrolled > 0 ? `${o.coursesEnrolled} course(s)` : 'No active courses';
+  const courseProgressColor = o.coursesEnrolled > 0 ? '#4F46E5' : '#94A3B8';
+
   return (
     <div style={{ padding: '20px 28px', fontFamily: 'Public Sans, system-ui, sans-serif', background: '#F1F5F9', minHeight: '100vh' }}>
       <div style={{ marginBottom: 20 }}>
@@ -105,19 +109,19 @@ export default function TraineeProgress() {
           <div style={{ ...card, marginBottom: 20 }}>
             <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600, color: '#64748B' }}>Overall Completion</p>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 12 }}>
-              <span style={{ fontSize: 36, fontWeight: 800, color: '#4F46E5' }}>{o.percent ?? 0}%</span>
-              <span style={{ fontSize: 13, color: '#64748B' }}>across your active learning activities</span>
+              <span style={{ fontSize: 36, fontWeight: 800, color: hasData ? '#4F46E5' : '#94A3B8' }}>{hasData ? (o.percent ?? 0) : '—'}{hasData ? '%' : ''}</span>
+              <span style={{ fontSize: 13, color: '#64748B' }}>{hasData ? 'across your active learning activities' : 'No learning activity recorded yet'}</span>
             </div>
-            <ProgressBar value={o.percent} />
+            <ProgressBar value={hasData ? o.percent : 0} />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
-            <StatCard label="Course Progress" value={`${o.percent ?? 0}%`} sub={`${o.coursesEnrolled ?? 0} course(s)`} color="#4F46E5" />
-            <StatCard label="Sessions" value={`${o.sessionsCompleted ?? 0}/${o.sessionsTotal ?? 0}`} sub={`${progress?.sessions?.percent ?? 0}% completed`} color="#059669" />
-            <StatCard label="Assignments" value={`${o.assignmentsSubmitted ?? 0}/${o.assignmentsTotal ?? 0}`} sub={`${progress?.assignments?.pending ?? 0} pending`} color="#D97706" />
-            <StatCard label="LMS Attendance" value={`${progress?.attendance?.lms?.percent ?? 0}%`} sub={`${progress?.attendance?.lms?.present ?? 0} present`} color="#0EA5E9" />
-            <StatCard label="Workshop Attendance" value={`${progress?.attendance?.workshop?.percent ?? 0}%`} sub={`${progress?.attendance?.workshop?.present ?? 0} present`} color="#7C3AED" />
-            <StatCard label="Lessons" value={`${o.lessonsCompleted ?? 0}/${o.lessonsTotal ?? 0}`} sub="completed" color="#DC2626" />
+            <StatCard label="Course Progress" value={courseProgressLabel} sub={courseProgressSub} color={courseProgressColor} />
+            <StatCard label="Sessions" value={`${o.sessionsCompleted ?? 0}/${o.sessionsTotal ?? 0}`} sub={o.sessionsTotal > 0 ? `${progress?.sessions?.percent ?? 0}% completed` : 'No sessions'} color="#059669" />
+            <StatCard label="Assignments" value={`${o.assignmentsSubmitted ?? 0}/${o.assignmentsTotal ?? 0}`} sub={o.assignmentsTotal > 0 ? `${progress?.assignments?.pending ?? 0} pending` : 'No assignments'} color="#D97706" />
+            <StatCard label="LMS Attendance" value={progress?.attendance?.lms?.total > 0 ? `${progress?.attendance?.lms?.percent ?? 0}%` : '—'} sub={progress?.attendance?.lms?.total > 0 ? `${progress?.attendance?.lms?.present ?? 0} present` : 'No LMS attendance'} color="#0EA5E9" />
+            <StatCard label="Workshop Attendance" value={progress?.attendance?.workshop?.total > 0 ? `${progress?.attendance?.workshop?.percent ?? 0}%` : '—'} sub={progress?.attendance?.workshop?.total > 0 ? `${progress?.attendance?.workshop?.present ?? 0} present` : 'No workshop attendance'} color="#7C3AED" />
+            <StatCard label="Lessons" value={o.lessonsTotal > 0 ? `${o.lessonsCompleted ?? 0}/${o.lessonsTotal ?? 0}` : '—'} sub={o.lessonsTotal > 0 ? 'completed' : 'No lessons'} color="#DC2626" />
           </div>
 
           {progress?.courses?.length > 0 && (

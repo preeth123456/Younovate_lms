@@ -70,13 +70,18 @@ workshopFeedbackSchema.index({ sessionId: 1, studentId: 1 }, { unique: true });
 
 // ── WorkshopCertificate ───────────────────────────────────────────────────────
 const workshopCertificateSchema = new mongoose.Schema({
-  workshopId:    { type: mongoose.Schema.Types.ObjectId, ref: 'Workshop', required: true },
-  studentId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User',     required: true },
-  certificateNo: { type: String, unique: true, sparse: true },
-  issuedDate:    { type: Date },
-  status:        { type: String, enum: ['Eligible', 'Issued', 'Pending', 'Rejected'], default: 'Pending' },
-  downloadUrl:   { type: String, default: '' },
-  issuedBy:      { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  workshopId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Workshop', required: true },
+  studentId:        { type: mongoose.Schema.Types.ObjectId, ref: 'User',     required: true },
+  certificateNo:    { type: String, unique: true, sparse: true },
+  issuedDate:       { type: Date },
+  status:           { type: String, enum: ['Eligible', 'Issued', 'Pending', 'Rejected'], default: 'Pending' },
+  downloadUrl:      { type: String, default: '' },
+  issuedBy:         { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  // Certificate workflow fields
+  assignedTrainerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  assignedAt:       { type: Date, default: null },
+  sentToTraineeAt:  { type: Date, default: null },
+  deliveryStatus:   { type: String, enum: ['generated', 'assigned_to_trainer', 'sent_to_trainee', 'delivered'], default: 'generated' },
 }, { timestamps: true });
 
 workshopCertificateSchema.index({ workshopId: 1, studentId: 1 }, { unique: true });
@@ -89,8 +94,8 @@ const workshopBatchSchema = new mongoose.Schema({
   registrationIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'WorkshopPublicRegistration' }],
   // students holds User ObjectId references for login-enabled participants (additive — registrationIds is kept)
   students:        [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  trainer:         { type: String, default: '', trim: true },
-  trainerId:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  trainer:         { type: String, required: true, trim: true },
+  trainerId:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   assignedBy:      { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   assignedAt:      { type: Date, default: null },
   reassignedAt:    { type: Date, default: null },
@@ -99,7 +104,7 @@ const workshopBatchSchema = new mongoose.Schema({
   startTime:       { type: String, default: '' },
   endTime:         { type: String, default: '' },
   mode:            { type: String, enum: ['Online', 'Offline', 'Hybrid'], default: 'Online' },
-  capacity:        { type: Number, default: 0 },
+  capacity:        { type: Number, required: true, min: 1 },
   status:          { type: String, enum: ['Draft', 'Scheduled', 'Active', 'Completed', 'Cancelled', 'Archived'], default: 'Draft' },
   notes:           { type: String, default: '' },
   createdBy:       { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

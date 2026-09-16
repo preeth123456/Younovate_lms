@@ -106,6 +106,7 @@ import TraineeCourses from './pages/trainee/Trainee_Courses';
 import TraineeCourseDetail from './pages/trainee/Trainee_CourseDetail';
 import TraineeWorkshopFeedback from './pages/trainee/WorkshopFeedback';
 import TraineeProgress from './pages/trainee/Progress';
+import TraineeCertificates from './pages/trainee/TraineeCertificates';
 import GlobalSearch from './pages/shared/GlobalSearch';
 
 
@@ -257,22 +258,23 @@ function App() {
         {/* Trainee */}
         <Route element={<ProtectedRoute allowedRoles={['trainee']} />}>
           <Route path="/trainee" element={<TraineeLayout />}>
-            <Route path="dashboard"   element={<TraineeDashboard />} />
-            <Route path="search"      element={<GlobalSearch />} />
-            <Route path="sessions"    element={<TraineeSessions />} />
-            <Route path="attendance"  element={<TraineeAttendance />} />
-            <Route path="assignments" element={<TraineeAssignments />} />
-            <Route path="feedback" element={<TraineeWorkshopFeedback />} />
-            <Route path="progress"  element={<TraineeProgress />} />
-            <Route path="settings"    element={<TraineeSettings />} />
-            <Route path="profile" element={<Profile />} />
-            <Route path="courses" element={<TraineeCourses />} />
-            <Route path="coursess/:id" element={<TraineeCourseDetail />} />
-            <Route path="coursess/:courseId" element={<TraineeCourseDetail />} />
-            <Route path="coursess/:courseId/segment/:segmentId" element={<CourseSegment />} />
-            <Route path="coursess/:courseId/segment/:segmentId/:topicId" element={<CourseTopic />} />
-            <Route path="coursess/:courseId/segment/:segmentId/:topicId/:lessonId" element={<LessonPlayer />} />      
-            <Route index element={<Navigate to="dashboard" replace />} />
+<Route path="dashboard"   element={<TraineeDashboard />} />
+          <Route path="search"      element={<GlobalSearch />} />
+          <Route path="sessions"    element={<TraineeSessions />} />
+          <Route path="attendance"  element={<TraineeAttendance />} />
+          <Route path="assignments" element={<TraineeAssignments />} />
+          <Route path="feedback" element={<TraineeWorkshopFeedback />} />
+          <Route path="progress"  element={<TraineeProgress />} />
+          <Route path="certificates" element={<TraineeCertificates />} />
+          <Route path="settings"    element={<TraineeSettings />} />
+          <Route path="profile" element={<Profile />} />
+          <Route path="courses" element={<TraineeCourses />} />
+          <Route path="coursess/:id" element={<TraineeCourseDetail />} />
+          <Route path="coursess/:courseId" element={<TraineeCourseDetail />} />
+          <Route path="coursess/:courseId/segment/:segmentId" element={<CourseSegment />} />
+          <Route path="coursess/:courseId/segment/:segmentId/:topicId" element={<CourseTopic />} />
+          <Route path="coursess/:courseId/segment/:segmentId/:topicId/:lessonId" element={<LessonPlayer />} />      
+          <Route index element={<Navigate to="dashboard" replace />} />
           </Route>
         </Route>
 

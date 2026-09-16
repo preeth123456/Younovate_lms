@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import axios from 'axios';
 import { API_BASE_URL } from '../../config/api';
 import WatchRecordingButton from '../../components/recording/WatchRecordingButton';
+import NotificationBell from '../../components/shared/NotificationBell';
 
 // ── LiveKit (third-party real-time video) ─────────────────────────────────────
 import { LiveKitRoom, VideoConference } from '@livekit/components-react';
@@ -1678,23 +1679,28 @@ const TrainerDashboard = () => {
 
       <div className="td-wrap" style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 24px' }}>
         <div style={{ marginBottom: 28, animation: 'fadeUp .35s ease' }}>
-          <h1 className="td-h1" style={{ fontSize: '1.65rem', fontWeight: 800, color: '#111827', letterSpacing: '-0.5px', marginBottom: 7 }}>
-            Trainer Dashboard
-          </h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.84rem', color: '#6b7280' }}>
-              {trainerName} · {trainerBatches} · {trainerRole}:
-            </span>
-            {isActive
-              ? <Pill bg="#dcfce7" color="#15803d" dot>Active</Pill>
-              : <Pill bg="#fee2e2" color="#b91c1c" dot>Inactive</Pill>
-            }
-            {liveSessions.length > 0 && (
-              <Pill bg="#fee2e2" color="#dc2626">
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#dc2626', animation: 'pulse 1s infinite' }} />
-                {liveSessions.length} Live
-              </Pill>
-            )}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
+            <div>
+              <h1 className="td-h1" style={{ fontSize: '1.65rem', fontWeight: 800, color: '#111827', letterSpacing: '-0.5px', marginBottom: 7 }}>
+                Trainer Dashboard
+              </h1>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.84rem', color: '#6b7280' }}>
+                  {trainerName} · {trainerBatches} · {trainerRole}:
+                </span>
+                {isActive
+                  ? <Pill bg="#dcfce7" color="#15803d" dot>Active</Pill>
+                  : <Pill bg="#fee2e2" color="#b91c1c" dot>Inactive</Pill>
+                }
+                {liveSessions.length > 0 && (
+                  <Pill bg="#fee2e2" color="#dc2626">
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#dc2626', animation: 'pulse 1s infinite' }} />
+                    {liveSessions.length} Live
+                  </Pill>
+                )}
+              </div>
+            </div>
+            <NotificationBell />
           </div>
         </div>
 

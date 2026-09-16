@@ -2,9 +2,10 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import axios from 'axios';
 import { useSelector } from 'react-redux';
-import { API_BASE_URL } from '../../../config/api';
+import { API_BASE_URL } from 'utils/apiConfig';
 import CourseCertificateTemplate from '../../../components/certificate/CourseCertificateTemplate';
 import { fmtDateTime } from '../../../utils/dateTime';
+import toast from 'react-hot-toast';
 
 const API = API_BASE_URL;
 
@@ -84,6 +85,7 @@ export default function WorkshopCertificates() {
   const [fStatus, setFStatus] = useState('all');
   const [busyId, setBusyId] = useState('');
   const [generatingAll, setGeneratingAll] = useState(false);
+  const [assignModal, setAssignModal] = useState({ open: false, cert: null, trainers: [], selectedTrainerId: '' });
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
@@ -148,6 +150,35 @@ export default function WorkshopCertificates() {
       });
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to generate certificate.');
+    } finally {
+      setBusyId('');
+    }
+  };
+
+  const openAssignTrainer = async (cert) => {
+    try {
+      const { data } = await axios.get(`${API}/api/workshops/trainer-list`, { headers });
+      setAssignModal({ open: true, cert, trainers: data.data || [], selectedTrainerId: '' });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to load trainers');
+    }
+  };
+
+  const handleAssignTrainer = async () => {
+    const { cert, selectedTrainerId } = assignModal;
+    if (!selectedTrainerId || !cert) return;
+    setBusyId(cert._id);
+    try {
+      const { data } = await axios.post(
+        `${API}/api/admin/workshops/certificates/${cert._id}/assign-trainer`,
+        { trainerId: selectedTrainerId },
+        { headers }
+      );
+      toast.success('Certificate assigned to trainer');
+      setCertificates(prev => prev.map(c => (String(c._id) === String(cert._id) ? { ...c, ...data.certificate } : c)));
+      setAssignModal({ open: false, cert: null, trainers: [], selectedTrainerId: '' });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to assign trainer');
     } finally {
       setBusyId('');
     }
@@ -323,18 +354,69 @@ export default function WorkshopCertificates() {
                             onClick={() => issueAndPrint(c, { skipIssue: true })}
                           />
                         )}
+                        {c.status === 'Issued' && c.deliveryStatus === 'generated' && (
+                          <ActionBtn
+                            icon="send"
+                            title="Send to Trainer"
+                            color="#7C3AED"
+                            disabled={isBusy}
+                            onClick={() => openAssignTrainer(c)}
+                          />
+                        )}
+                        {c.status === 'Issued' && c.deliveryStatus === 'assigned_to_trainer' && (
+                          <span style={{ display: 'flex', alignItems: 'center', padding: '0 8px', fontSize: 11, color: '#3B82F6', background: '#DBEAFE', borderRadius: 4 }}>
+                            <i className="ti ti-user-check" style={{ marginRight: 4 }} /> Assigned
+                          </span>
+                        )}
+                        {c.status === 'Issued' && (c.deliveryStatus === 'sent_to_trainee' || c.deliveryStatus === 'delivered') && (
+                          <span style={{ display: 'flex', alignItems: 'center', padding: '0 8px', fontSize: 11, color: '#10B981', background: '#D1FAE5', borderRadius: 4 }}>
+                            <i className="ti ti-mail" style={{ marginRight: 4 }} /> Sent
+                          </span>
+                        )}
                       </div>
                     </td>
                   </tr>
                 );
               })}
-            </tbody>
-          </table>
+</tbody>
+            </table>
+          </div>
+          <div style={{ padding: '12px 16px', borderTop: '1px solid #F1F5F9', fontSize: 12, color: '#94A3B8', fontWeight: 600 }}>
+            Showing {filtered.length} of {certificates.length} records
+          </div>
         </div>
-        <div style={{ padding: '12px 16px', borderTop: '1px solid #F1F5F9', fontSize: 12, color: '#94A3B8', fontWeight: 600 }}>
-          Showing {filtered.length} of {certificates.length} records
-        </div>
-      </div>
+
+        {/* Assign Trainer Modal */}
+        {assignModal.open && assignModal.cert && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }} onClick={() => setAssignModal({ ...assignModal, open: false })}>
+            <div style={{ background: '#fff', borderRadius: 16, width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(15,23,42,0.3)' }} onClick={e => e.stopPropagation()}>
+              <div style={{ padding: '18px 20px', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: '#0F172A' }}>Send Certificate to Trainer</h3>
+                  <div style={{ marginTop: 4, fontSize: 12.5, color: '#64748B', fontWeight: 700 }}>{assignModal.cert.studentId?.name} — {assignModal.cert.workshopId?.title}</div>
+                </div>
+                <button onClick={() => setAssignModal({ ...assignModal, open: false })} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#64748B' }}>×</button>
+              </div>
+              <div style={{ padding: 20 }}>
+                {assignModal.trainers.length === 0 ? (
+                  <div style={{ color: '#94A3B8', padding: 12 }}>No trainers available.</div>
+                ) : (
+                  <select style={S.input} value={assignModal.selectedTrainerId} onChange={e => setAssignModal({ ...assignModal, selectedTrainerId: e.target.value })}>
+                    <option value="">-- Select a trainer --</option>
+                    {assignModal.trainers.map(t => <option key={t._id} value={t._id}>{t.name} ({t.email})</option>)}
+                  </select>
+                )}
+              </div>
+              <div style={{ padding: '14px 20px', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                <button style={S.btnGhost} onClick={() => setAssignModal({ ...assignModal, open: false })}>Cancel</button>
+                <button style={{ ...S.btnPri, opacity: (!assignModal.selectedTrainerId || busyId === assignModal.cert._id) ? 0.6 : 1 }} disabled={!assignModal.selectedTrainerId || busyId === assignModal.cert._id} onClick={handleAssignTrainer}>
+                  {busyId === assignModal.cert._id ? 'Assigning...' : 'Assign'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
     </div>
   );
 }

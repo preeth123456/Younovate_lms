@@ -296,12 +296,21 @@ const handleDelete = async (id, name) => {
       }
     }
 
-    // Capacity: positive whole number only
-    if (form.capacity !== '' && form.capacity !== null && form.capacity !== undefined) {
-      const cap = Number(form.capacity);
-      if (!Number.isInteger(cap) || cap <= 0) {
-        return 'Maximum seats must be a positive whole number.';
-      }
+    // Capacity: required, positive whole number
+    if (form.capacity === '' || form.capacity === null || form.capacity === undefined) {
+      return 'Capacity is required.';
+    }
+    const cap = Number(form.capacity);
+    if (!Number.isInteger(cap) || cap <= 0) {
+      return 'Capacity must be a positive whole number.';
+    }
+    if (selectedApprovedRegs.length > cap) {
+      return 'Capacity cannot be less than selected trainee count.';
+    }
+
+    // Trainer: required
+    if (!form.trainerId || !form.trainerId.trim()) {
+      return 'Trainer is required.';
     }
 
     return null;
@@ -601,7 +610,7 @@ const handleDelete = async (id, name) => {
                   <input style={S.input} disabled value={form.workshopId || (workshopIdFromSelection || '')} />
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', marginBottom: 4 }}>Trainer</div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', marginBottom: 4 }}>Trainer *</div>
                   <select
                     style={S.input}
                     value={form.trainerId}
@@ -611,7 +620,7 @@ const handleDelete = async (id, name) => {
                       setForm((f) => ({ ...f, trainerId: id, trainer: t?.name || '' }));
                     }}
                   >
-                    <option value="">{trainerListStatus === 'loading' ? 'Loading trainers…' : 'Select trainer (optional)'}</option>
+                    <option value="">{trainerListStatus === 'loading' ? 'Loading trainers…' : 'Select trainer'}</option>
                     {trainerList.map((t) => (
                       <option key={t._id} value={t._id}>{t.name}{t.email ? ` (${t.email})` : ''}</option>
                     ))}
