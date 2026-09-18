@@ -149,6 +149,45 @@ router.post('/', async (req, res) => {
         );
         console.log('Recording saved →', playUrl, `(${durationSeconds}s, ${sizeBytes} bytes)`, finalRec._id);
 
+        // Recording-ready inbox (best-effort — never blocks the webhook).
+        try {
+          const notify = require('../utils/notificationService');
+          const done = await Session.findOne({ $or: [{ egressId: eg.egressId }, { roomName: eg.roomName }] })
+            .select('_id title sessionType batchId workshopBatchId trainerId').lean();
+          const mod = done?.sessionType === 'WORKSHOP' ? 'Workshop' : 'LMS';
+          const items = [];
+          if (done?.trainerId) {
+            items.push({
+              userId: done.trainerId, role: 'trainer', module: mod,
+              type: 'recording_ready', kind: `${mod === 'Workshop' ? 'workshop' : 'lms'}_recording_ready`,
+              title: 'Recording Ready',
+              message: `The recording for "${done.title || 'your session'}" is now available.`,
+              dedupeKey: `recording:${String(finalRec._id)}:trainer`,
+              link: mod === 'Workshop' ? '/trainer/recordings?sessionType=WORKSHOP' : '/trainer/recordings',
+              meta: { sessionId: notify.idOf(done._id), recordingId: notify.idOf(finalRec._id), entityType: 'recording' },
+            });
+          }
+          const User = require('../models/User');
+          let traineeIds = [];
+          if (done?.sessionType === 'WORKSHOP' && done?.workshopBatchId) {
+            const b = await require('../models/WorkshopBatch').findById(done.workshopBatchId).select('students').lean();
+            traineeIds = (b?.students || []).map(String);
+          } else if (done?.batchId) {
+            const rows = await User.find({ role: 'trainee', isActive: true, batchIds: done.batchId }).select('_id').lean();
+            traineeIds = rows.map((r) => String(r._id));
+          }
+          traineeIds.forEach((id) => items.push({
+            userId: id, role: 'trainee', module: mod,
+            type: 'recording_ready', kind: `${mod === 'Workshop' ? 'workshop' : 'lms'}_recording_ready`,
+            title: 'Recording Available',
+            message: `The recording for "${done?.title || 'your session'}" is ready to watch.`,
+            dedupeKey: `recording:${String(finalRec._id)}:trainee:${id}`,
+            link: mod === 'Workshop' ? '/trainee/dashboard' : '/trainee/sessions',
+            meta: { sessionId: notify.idOf(done?._id), recordingId: notify.idOf(finalRec._id), entityType: 'recording' },
+          }));
+          await notify.notifyUsers(items);
+        } catch (_) {}
+
         if (filePath && fs.existsSync(filePath)) {
           setImmediate(() => tryFastStartMp4(filePath));
         }

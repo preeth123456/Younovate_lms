@@ -174,6 +174,33 @@ router.post('/', protect, authorize('admin'), async (req, res) => {
     await session.populate('trainerId', 'name email');
     await session.populate({ path: 'workshopBatchId', populate: { path: 'workshopId', select: 'title' } });
 
+    // Persistent inbox (best-effort): assigned trainer + batch trainees only.
+    try {
+      const notify = require('../utils/notificationService');
+      const trainees = await WorkshopBatch.findById(session.workshopBatchId?._id || session.workshopBatchId).select('students').lean();
+      const tIds = (trainees?.students || []).map(String);
+      await notify.notifyUsers([
+        {
+          userId: session.trainerId?._id || session.trainerId, role: 'trainer', module: 'Workshop',
+          type: 'session_scheduled', kind: 'workshop_session_scheduled',
+          title: 'New Workshop Session Assigned',
+          message: `You have a new workshop session: ${session.title}.`,
+          dedupeKey: `workshop:session:${notify.idOf(session._id)}:trainer`,
+          link: '/trainer/workshops/live',
+          meta: { sessionId: notify.idOf(session._id), entityType: 'session' },
+        },
+        ...tIds.map((id) => ({
+          userId: id, role: 'trainee', module: 'Workshop',
+          type: 'session_scheduled', kind: 'workshop_session_scheduled',
+          title: 'New Workshop Session Scheduled',
+          message: `A new workshop session "${session.title}" has been scheduled for your batch.`,
+          dedupeKey: `workshop:session:${notify.idOf(session._id)}:trainee:${id}`,
+          link: '/trainee/dashboard',
+          meta: { sessionId: notify.idOf(session._id), entityType: 'session' },
+        })),
+      ]);
+    } catch (_) {}
+
     emitToRole('trainer', 'notification', { type: 'info', message: `New workshop session: ${session.title}` });
 
     return res.status(201).json({ success: true, session });
@@ -232,6 +259,28 @@ router.put('/:id', protect, authorize('admin'), async (req, res) => {
      .populate('workshopBatchId', 'batchName batchCode');
 
     if (!session) return res.status(404).json({ success: false, message: 'Workshop session not found' });
+    // Reschedule / cancel inbox (best-effort).
+    try {
+      const notify = require('../utils/notificationService');
+      const batch = await WorkshopBatch.findById(session.workshopBatchId?._id || session.workshopBatchId).select('students').lean();
+      const changed = update.scheduledAt ? 'rescheduled' : (String(update.status || '').toLowerCase() === 'cancelled' ? 'cancelled' : 'updated');
+      const recips = [
+        { userId: session.trainerId?._id || session.trainerId, role: 'trainer', link: '/trainer/workshops/live', dk: 'trainer' },
+        ...((batch?.students || []).map((id) => ({ userId: String(id), role: 'trainee', link: '/trainee/dashboard', dk: `trainee:${id}` }))),
+      ];
+      await notify.notifyUsers(recips.filter((r) => r.userId).map((r) => ({
+        userId: r.userId, role: r.role, module: 'Workshop',
+        type: changed === 'cancelled' ? 'session_cancelled' : 'session_rescheduled',
+        kind: changed === 'cancelled' ? 'workshop_session_cancelled' : 'workshop_session_rescheduled',
+        title: changed === 'cancelled' ? 'Workshop Session Cancelled' : 'Workshop Session Rescheduled',
+        message: changed === 'cancelled'
+          ? `Workshop session "${session.title}" has been cancelled.`
+          : `Workshop session "${session.title}" has been updated${update.scheduledAt ? ` — new time ${notify.fmtDT(session.scheduledAt)}` : ''}.`,
+        dedupeKey: `workshop:session:${notify.idOf(session._id)}:${changed}:${Date.now()}:${r.dk}`,
+        link: r.link,
+        meta: { sessionId: notify.idOf(session._id), entityType: 'session' },
+      })));
+    } catch (_) {}
     return res.json({ success: true, session });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -357,6 +406,21 @@ router.post('/:id/start', protect, authorize('trainer'), async (req, res) => {
 
     const token = await generateLiveKitToken(req.user, roomName, { canPublish: true });
 
+    // "Live" inbox ONLY on actual Start (best-effort).
+    try {
+      const notify = require('../utils/notificationService');
+      const batch = await WorkshopBatch.findById(session.workshopBatchId).select('students').lean();
+      await notify.notifyUsers(((batch?.students) || []).map((id) => ({
+        userId: String(id), role: 'trainee', module: 'Workshop',
+        type: 'session_live', kind: 'workshop_session_live',
+        title: 'Workshop Session Is Live Now',
+        message: `"${session.title}" is live — join now.`,
+        dedupeKey: `workshop:session:${notify.idOf(session._id)}:live`,
+        link: '/trainee/dashboard',
+        meta: { sessionId: notify.idOf(session._id), entityType: 'session' },
+      })));
+    } catch (_) {}
+
     return res.json({ success: true, message: 'Workshop session is live', token, url: LIVEKIT_URL, roomName, role: 'trainer', session });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -469,6 +533,21 @@ router.post('/:id/end', protect, authorize('trainer'), async (req, res) => {
         id: session._id,
         status: 'completed',
       });
+    } catch (_) {}
+
+    // Completion inbox (best-effort) — feedback now available.
+    try {
+      const notify = require('../utils/notificationService');
+      const batch = await WorkshopBatch.findById(session.workshopBatchId).select('students').lean();
+      await notify.notifyUsers(((batch?.students) || []).map((id) => ({
+        userId: String(id), role: 'trainee', module: 'Workshop',
+        type: 'session_completed', kind: 'workshop_session_completed',
+        title: 'Workshop Session Completed',
+        message: `"${session.title}" has ended. Feedback is now available.`,
+        dedupeKey: `workshop:session:${notify.idOf(session._id)}:completed`,
+        link: '/trainee/feedback',
+        meta: { sessionId: notify.idOf(session._id), entityType: 'session' },
+      })));
     } catch (_) {}
 
     return res.json({

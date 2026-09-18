@@ -56,7 +56,7 @@ router.post('/mark', authorize('trainer', 'admin'), async (req, res) => {
   if (!sessionId || !traineeId || !status)
     return res.status(400).json({ success: false, message: 'sessionId, traineeId and status required' });
 
-  const session = await Session.findById(sessionId).select('batchId');
+  const session = await Session.findById(sessionId).select('batchId title sessionType');
   if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
 
   const record = await Attendance.findOneAndUpdate(
@@ -64,6 +64,20 @@ router.post('/mark', authorize('trainer', 'admin'), async (req, res) => {
     { status, note: note || '', markedBy: req.user._id, markedAt: new Date(), batch: session.batchId },
     { upsert: true, new: true }
   );
+
+  // Trainee inbox: attendance marked (best-effort — never blocks the mark).
+  try {
+    const notify = require('../utils/notificationService');
+    await notify.notifyUsers([{
+      userId: traineeId, role: 'trainee', module: session.sessionType === 'WORKSHOP' ? 'Workshop' : 'LMS',
+      type: 'attendance_marked', kind: 'attendance_marked',
+      title: 'Attendance Marked',
+      message: `Your attendance for "${session.title || 'a session'}" was marked: ${status}.`,
+      dedupeKey: `attendance:${String(sessionId)}:${String(traineeId)}:${status}`,
+      link: '/trainee/attendance',
+      meta: { sessionId: notify.idOf(sessionId), entityType: 'attendance' },
+    }]);
+  } catch (_) {}
 
   // Real-time push
   emitToSession(sessionId, 'attendance:update', { sessionId, traineeId, status });

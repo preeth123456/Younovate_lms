@@ -59,6 +59,10 @@ export default function LiveRoom({
   onSessionEnd,
   onDisconnected,
 }) {
+  const [connError, setConnError] = useState('');
+  useEffect(() => {
+    setConnError('');
+  }, [token, serverUrl]);
   const [chatOpen, setChatOpen] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
   const [showDevices, setShowDevices] = useState(false);
@@ -446,9 +450,16 @@ export default function LiveRoom({
         video={canPublish}
         audio={canPublish}
         onDisconnected={onDisconnected || onLeave}
+        onError={(err) => {
+          // Never expose API secrets — fixed friendly message, details to console.
+          console.error('Live session connection failed:', err?.message || err);
+          setConnError('Unable to connect to the live session. Please try again.');
+        }}
         data-lk-theme="default"
         style={{ flex: 1, minHeight: 0, display: 'flex' }}
       >
+        {/* Connection failure banner (replaces stuck "Connecting…") */}
+        <ConnectionErrorBanner message={connError} />
         <DisconnectOnEnd ended={sessionEnded} />
         {/* Main video area */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
@@ -664,6 +675,21 @@ function DisconnectOnEnd({ ended }) {
     room.disconnect(true);
   }, [ended, room]);
   return null;
+}
+
+/** Inline banner shown when the LiveKit Cloud connection fails (no stuck spinner). */
+function ConnectionErrorBanner({ message }) {
+  if (!message) return null;
+  return (
+    <div style={{
+      position: 'absolute', top: 56, left: '50%', transform: 'translateX(-50%)',
+      zIndex: 60, background: '#7f1d1d', color: '#fecaca', padding: '8px 16px',
+      borderRadius: 8, border: '1px solid #ef4444', fontSize: 13, fontWeight: 600,
+      boxShadow: '0 4px 20px rgba(0,0,0,.4)', maxWidth: '90%', textAlign: 'center',
+    }}>
+      {message}
+    </div>
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════

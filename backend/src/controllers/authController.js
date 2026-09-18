@@ -79,7 +79,7 @@ const login = async (req, res) => {
   if (!user) {
     console.log(`   ❌ User NOT FOUND in database for email: ${email}`);
     console.log(`${LOG_LINE}\n`);
-    return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    return res.status(401).json({ success: false, message: 'Wrong credentials' });
   }
 
   console.log(`   ✅ User FOUND:`);
@@ -104,7 +104,7 @@ const login = async (req, res) => {
       console.log(`   bcrypt error: ${e.message}`);
     }
     console.log(`${LOG_LINE}\n`);
-    return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    return res.status(401).json({ success: false, message: 'Wrong credentials' });
   }
 
   console.log(`   ✅ Password MATCH!`);

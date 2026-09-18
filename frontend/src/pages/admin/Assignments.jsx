@@ -1,15 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import {
   fetchAssignments,
   selectAllAssignments,
   selectAssignmentsError,
   selectAssignmentsStatus,
-  createAssignment,
 } from '../../features/assignment/assignmentsSlice';
 
-// Admin Assignments page
-// Uses existing assignmentsSlice endpoints.
+// Admin Assignments — VIEW/MONITOR ONLY (no create/assign UI; backend
+// POST /api/assignments is trainer-only so Admin creation is rejected).
 
 const C = {
   brand: '#2f6f9b',
@@ -52,104 +52,17 @@ function Badge({ text, tone = 'default' }) {
   );
 }
 
-function TextInput(props) {
-  return (
-    <input
-      {...props}
-      style={{
-        width: '100%',
-        padding: '10px 12px',
-        borderRadius: 10,
-        border: `1px solid ${C.line}`,
-        outline: 'none',
-        background: '#fff',
-        fontFamily: 'inherit',
-      }}
-    />
-  );
-}
-
-function TextArea(props) {
-  return (
-    <textarea
-      {...props}
-      style={{
-        width: '100%',
-        padding: '10px 12px',
-        borderRadius: 10,
-        border: `1px solid ${C.line}`,
-        outline: 'none',
-        background: '#fff',
-        minHeight: 92,
-        resize: 'vertical',
-        fontFamily: 'inherit',
-      }}
-    />
-  );
-}
-
-function PrimaryButton({ children, ...props }) {
-  return (
-    <button
-      {...props}
-      style={{
-        padding: '10px 16px',
-        background: C.brand,
-        color: '#fff',
-        border: 'none',
-        borderRadius: 10,
-        cursor: props.disabled ? 'not-allowed' : 'pointer',
-        fontFamily: 'inherit',
-        fontWeight: 800,
-        letterSpacing: 0.2,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
 export default function AdminAssignments() {
   const dispatch = useAppDispatch();
-  const assignments = useAppSelector(selectAllAssignments);
+  // Selector already guarantees an array; local guard keeps `.map()` safe.
+  const assignmentsRaw = useAppSelector(selectAllAssignments);
+  const assignments = Array.isArray(assignmentsRaw) ? assignmentsRaw : [];
   const status = useAppSelector(selectAssignmentsStatus);
   const error = useAppSelector(selectAssignmentsError);
-
-  const [title, setTitle] = useState('');
-  const [type, setType] = useState('assignment');
-  const [dueDate, setDueDate] = useState('');
-  const [instructions, setInstructions] = useState('');
-  const [sessionId, setSessionId] = useState('');
-
-  const createDisabled = useMemo(() => status === 'loading', [status]);
 
   useEffect(() => {
     dispatch(fetchAssignments());
   }, [dispatch]);
-
-  const handleCreate = async (e) => {
-    e.preventDefault();
-
-    // Backend may require different fields; slice simply forwards data.
-    // Keep it minimal + optional.
-    const payload = {
-      title: title.trim(),
-      type,
-      dueDate: dueDate ? new Date(dueDate).toISOString() : undefined,
-      instructions: instructions.trim() || undefined,
-      sessionId: sessionId || undefined,
-    };
-
-    if (!payload.title) return;
-
-    await dispatch(createAssignment(payload));
-
-    setTitle('');
-    setDueDate('');
-    setInstructions('');
-    setSessionId('');
-    setType('assignment');
-  };
 
   return (
     <div style={{ padding: 32, fontFamily: 'Public Sans, system-ui, sans-serif' }}>
@@ -157,11 +70,12 @@ export default function AdminAssignments() {
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 800, marginBottom: 6, color: C.text }}>Assignments</h2>
           <p style={{ margin: 0, fontSize: 13, color: C.sub }}>
-            Manage assignments/quizzes for sessions.
+            View/monitor assignment status and trainee progress. Assignments are created by Trainers only. Module theory + practical monitoring is{' '}
+            <Link to="/admin/module-assessments" style={{ color: '#1d4ed8', fontWeight: 700 }}>here</Link>.
           </p>
         </div>
         <div style={{ fontSize: 13, color: C.sub, fontWeight: 800 }}>
-          Total: {assignments?.length ?? 0}
+          Total: {assignments.length}
         </div>
       </div>
 
@@ -174,61 +88,6 @@ export default function AdminAssignments() {
           overflow: 'hidden',
         }}
       >
-        <div style={{ padding: 22, borderBottom: `1px solid ${C.line}` }}>
-          <div style={{ fontWeight: 900, color: C.text, marginBottom: 10 }}>Create Assignment</div>
-          <form onSubmit={handleCreate} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>
-              <div style={{ fontSize: 12, color: C.sub, fontWeight: 800, marginBottom: 6 }}>Title</div>
-              <TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g., Implement ToDo App" />
-            </div>
-
-            <div>
-              <div style={{ fontSize: 12, color: C.sub, fontWeight: 800, marginBottom: 6 }}>Type</div>
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  borderRadius: 10,
-                  border: `1px solid ${C.line}`,
-                  outline: 'none',
-                  background: '#fff',
-                  fontFamily: 'inherit',
-                }}
-              >
-                <option value="assignment">Assignment</option>
-                <option value="quiz">Quiz</option>
-                <option value="project">Project</option>
-              </select>
-            </div>
-
-            <div>
-              <div style={{ fontSize: 12, color: C.sub, fontWeight: 800, marginBottom: 6 }}>Due date</div>
-              <TextInput type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-            </div>
-
-            <div>
-              <div style={{ fontSize: 12, color: C.sub, fontWeight: 800, marginBottom: 6 }}>Session ID (optional)</div>
-              <TextInput value={sessionId} onChange={(e) => setSessionId(e.target.value)} placeholder="Paste session _id" />
-            </div>
-
-            <div style={{ gridColumn: '1 / -1' }}>
-              <div style={{ fontSize: 12, color: C.sub, fontWeight: 800, marginBottom: 6 }}>Instructions (optional)</div>
-              <TextArea value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="Describe what trainees need to submit..." />
-            </div>
-
-            <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <PrimaryButton type="submit" disabled={createDisabled || !title.trim()}>
-                Create
-              </PrimaryButton>
-              <div style={{ fontSize: 12, color: C.sub, fontWeight: 800 }}>
-                {title.trim() ? 'Ready to create' : 'Title is required'}
-              </div>
-            </div>
-          </form>
-        </div>
-
         <div style={{ padding: 22 }}>
           {status === 'loading' ? (
             <div style={{ color: C.sub, fontWeight: 800 }}>Loading assignments…</div>
@@ -247,7 +106,7 @@ export default function AdminAssignments() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(assignments || []).map((a, idx) => {
+                  {assignments.map((a, idx) => {
                     const due = a.dueDate ? new Date(a.dueDate).toLocaleDateString() : a.dueAt ? new Date(a.dueAt).toLocaleDateString() : '—';
                     const session = a.sessionId?.name || a.sessionId?._id || a.session?._id || a.sessionId || '—';
                     const statusTxt = a.status || (a.dueDate ? (new Date(a.dueDate) < new Date() ? 'Due' : 'Active') : 'Active');
@@ -266,7 +125,7 @@ export default function AdminAssignments() {
                     );
                   })}
 
-                  {(assignments || []).length === 0 ? (
+                  {assignments.length === 0 ? (
                     <tr>
                       <td colSpan={5} style={{ padding: 32, textAlign: 'center', color: C.sub, fontWeight: 800 }}>
                         No assignments found

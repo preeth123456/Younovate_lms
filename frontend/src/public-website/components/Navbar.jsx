@@ -53,6 +53,7 @@ export default function Navbar() {
     { to: '/', label: 'Home' },
     { to: '/programs', label: 'AI Programs' },
     { to: '/workshops', label: 'Workshops' },
+    { to: '/lms-registration', label: 'LMS Registration' },
     { to: '/about', label: 'About' },
     { to: '/contact', label: 'Contact' },
   ];

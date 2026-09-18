@@ -10,6 +10,8 @@ const NAV = [
       { to: '/trainee/courses',     icon: 'book',             label: 'My Courses'  },
       { to: '/trainee/sessions',    icon: 'video',            label: 'Sessions'    },
       { to: '/trainee/attendance',  icon: 'user-check',       label: 'Attendance'  },
+      { to: '/trainee/assignments', icon: 'clipboard-list',   label: 'Assignments' },
+      { to: '/trainee/module-assessments', icon: 'file-analytics', label: 'Assessments' },
       { to: '/trainee/feedback',    icon: 'star',             label: 'Feedback'    },
     ],
   },

@@ -132,6 +132,24 @@ const goLive = async (req, res) => {
 
     const token = await generateLiveKitToken(req.user, roomName, { canPublish: true });
 
+    // "Live" inbox ONLY on actual Start (best-effort).
+    try {
+      const notify = require('../utils/notificationService');
+      const User = require('../models/User');
+      const trainees = session.batchId
+        ? await User.find({ role: 'trainee', isActive: true, batchIds: session.batchId }).select('_id').lean()
+        : [];
+      await notify.notifyUsers(trainees.map((t) => ({
+        userId: t._id, role: 'trainee', module: 'LMS',
+        type: 'session_live', kind: 'lms_session_live',
+        title: 'Session Is Live Now',
+        message: `"${session.title}" is live — join now.`,
+        dedupeKey: `lms:session:${notify.idOf(session._id)}:live`,
+        link: '/trainee/sessions',
+        meta: { sessionId: notify.idOf(session._id), batchId: notify.idOf(session.batchId), entityType: 'session' },
+      })));
+    } catch (_) {}
+
     // Tell trainees in real time that the room is open.
     emitToRole('trainee', 'session:status', { id: String(session._id), status: 'live' });
     (session.trainees || []).forEach((t) =>
@@ -269,6 +287,24 @@ const endSession = async (req, res) => {
     }
 
     await session.populate('batchId', 'name');
+
+    // Completion inbox (best-effort) — feedback now available.
+    try {
+      const notify = require('../utils/notificationService');
+      const User = require('../models/User');
+      const trainees = session.batchId?._id || session.batchId
+        ? await User.find({ role: 'trainee', isActive: true, batchIds: session.batchId?._id || session.batchId }).select('_id').lean()
+        : [];
+      await notify.notifyUsers(trainees.map((t) => ({
+        userId: t._id, role: 'trainee', module: 'LMS',
+        type: 'session_completed', kind: 'lms_session_completed',
+        title: 'Session Completed',
+        message: `"${session.title}" has ended. Feedback is now available.`,
+        dedupeKey: `lms:session:${notify.idOf(session._id)}:completed`,
+        link: '/trainee/feedback',
+        meta: { sessionId: notify.idOf(session._id), entityType: 'session' },
+      })));
+    } catch (_) {}
 
     // ── Finalize attendance for trainees still connected ─────────────────────
     // Any trainee whose Attendance record has no `leftAt` is treated as having

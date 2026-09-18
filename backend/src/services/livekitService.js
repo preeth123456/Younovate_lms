@@ -33,12 +33,17 @@ function isLocalDockerLiveKit() {
 
 if (LIVEKIT_URL) {
   const s3On = process.env.USE_S3_RECORDING === 'true';
-  if (isLiveKitCloud() && !s3On) {
-    console.warn('⚠️  LIVEKIT_URL points to LiveKit Cloud but USE_S3_RECORDING is not true.');
-    console.warn('   Cloud egress requires S3. For local Docker recording use:');
-    console.warn('   LIVEKIT_URL=ws://localhost:7880  LIVEKIT_API_KEY=devkey  (+ secret from livekit.yaml)');
+  if (isLiveKitCloud()) {
+    if (!getS3UploadConfig()) {
+      console.warn('⚠️  LIVEKIT_URL points to LiveKit Cloud but S3 output is not configured.');
+      console.warn('   Cloud egress requires S3 (S3_BUCKET + AWS credentials + AWS_REGION).');
+      console.warn('   See backend/.env.cloud.example. Docker stays optional for local recording.');
+    } else {
+      console.log('✅ LiveKit: Cloud mode (rooms + egress via Cloud, recordings → S3, no Docker needed)');
+    }
   } else if (isLocalDockerLiveKit()) {
-    console.log('✅ LiveKit: local Docker mode (egress → ./lms-recordings)');
+    if (!s3On) console.log('✅ LiveKit: local Docker mode (egress → ./lms-recordings)');
+    else console.log('✅ LiveKit: local Docker mode with S3 recording output');
   }
 }
 
@@ -89,7 +94,12 @@ async function generateLiveKitToken(
 }
 
 // ── Recording: Docker/local egress by default; S3 only when USE_S3_RECORDING=true ──
+// LiveKit Cloud has no access to the local ./lms-recordings bind mount, so
+// Cloud egress ALWAYS uses the S3 file output (existing S3 configuration).
+// Docker remains an optional local path: when LIVEKIT_URL is localhost the
+// previous local-disk output is used.
 function useS3Recording() {
+  if (isLiveKitCloud()) return true;
   return process.env.USE_S3_RECORDING === 'true';
 }
 
@@ -134,10 +144,12 @@ async function startRecording(roomName) {
     throw new Error('LiveKit is not configured (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET).');
   }
 
-  if (isLiveKitCloud() && process.env.USE_S3_RECORDING !== 'true') {
+// Cloud egress requires S3 — fail fast with a clear message instead of
+  // starting an egress whose file can never be retrieved.
+  if (isLiveKitCloud() && !getS3UploadConfig()) {
     throw new Error(
-      'LiveKit Cloud recording requires S3 (set USE_S3_RECORDING=true). ' +
-      'For local Docker recording, set LIVEKIT_URL=ws://localhost:7880 and use devkey credentials from livekit.yaml.'
+      'LiveKit Cloud recording requires S3 output (S3_BUCKET + AWS credentials + AWS_REGION). ' +
+      'Set them in backend/.env — see backend/.env.cloud.example.'
     );
   }
 

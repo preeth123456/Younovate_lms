@@ -62,13 +62,28 @@ router.get('/:id', async (req, res) => {
   return res.json({ success: true, assignment });
 });
 
-// POST /api/assignments  [trainer/admin]
+// POST /api/assignments  [trainer ONLY — Admin is view/monitor-only]
 //   Body: { title, batchId, dueDate, description?, instructions?, maxScore?, status? }
-router.post('/', authorize('trainer', 'admin'), async (req, res) => {
+router.post('/', authorize('trainer'), async (req, res) => {
   const { title, batchId, dueDate } = req.body;
   if (!title || !batchId || !dueDate)
     return res.status(400).json({ success: false, message: 'title, batchId and dueDate required' });
   const assignment = await Assignment.create({ ...req.body, createdBy: req.user._id });
+  // Trainee inbox: everyone in the batch (best-effort).
+  try {
+    const notify = require('../utils/notificationService');
+    const User = require('../models/User');
+    const trainees = await User.find({ role: 'trainee', isActive: true, batchIds: assignment.batchId }).select('_id').lean();
+    await notify.notifyUsers(trainees.map((t) => ({
+      userId: t._id, role: 'trainee', module: 'LMS',
+      type: 'assignment_assigned', kind: 'lms_assignment_assigned',
+      title: 'New Assignment Available',
+      message: `A new assignment "${assignment.title}" is available for your batch.`,
+      dedupeKey: `lms:assignment:${notify.idOf(assignment._id)}:trainee:${t._id}`,
+      link: '/trainee/assignments',
+      meta: { assignmentId: notify.idOf(assignment._id), batchId: notify.idOf(assignment.batchId), entityType: 'assignment' },
+    })));
+  } catch (_) {}
   return res.status(201).json({ success: true, assignment });
 });
 
@@ -110,6 +125,21 @@ router.post('/:id/submit', authorize('trainee'), upload.single('file'), async (r
     assignment.submissions.push(submissionData);
   }
   await assignment.save();
+  // Trainer inbox: assignment creator only (best-effort).
+  try {
+    const notify = require('../utils/notificationService');
+    if (assignment.createdBy) {
+      await notify.notifyUsers([{
+        userId: assignment.createdBy, role: 'trainer', module: 'LMS',
+        type: 'assignment_submitted', kind: 'lms_assignment_submitted',
+        title: 'Assignment Submitted',
+        message: `${req.user?.name || 'A trainee'} submitted "${assignment.title}".`,
+        dedupeKey: `lms:assignment:${notify.idOf(assignment._id)}:submitted:${notify.idOf(req.user._id)}`,
+        link: '/trainer/assignments',
+        meta: { assignmentId: notify.idOf(assignment._id), entityType: 'assignment' },
+      }]);
+    }
+  } catch (_) {}
   return res.status(201).json({ success: true, message: 'Assignment submitted' });
 });
 
@@ -128,6 +158,19 @@ router.put('/:id/grade', authorize('trainer', 'admin'), async (req, res) => {
 
   Object.assign(sub, { grade, feedback: feedback || '', status: 'graded', gradedBy: req.user._id, gradedAt: new Date(), allowResubmit: Boolean(allowResubmit) });
   await assignment.save();
+  // Trainee inbox: graded/completed (best-effort).
+  try {
+    const notify = require('../utils/notificationService');
+    await notify.notifyUsers([{
+      userId: traineeId, role: 'trainee', module: 'LMS',
+      type: 'assignment_graded', kind: 'lms_assignment_completed',
+      title: 'Assignment Reviewed',
+      message: `Your submission for "${assignment.title}" has been reviewed.`,
+      dedupeKey: `lms:assignment:${notify.idOf(assignment._id)}:graded:${notify.idOf(traineeId)}`,
+      link: '/trainee/assignments',
+      meta: { assignmentId: notify.idOf(assignment._id), entityType: 'assignment' },
+    }]);
+  } catch (_) {}
   return res.json({ success: true, submission: sub });
 });
 

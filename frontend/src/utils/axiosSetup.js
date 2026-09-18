@@ -27,6 +27,13 @@ axios.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
+    // Login failures are credential errors, not expired sessions — never
+    // attempt a silent refresh for them; reject immediately so the login
+    // thunk's rejected case runs (loading stops, error shows).
+    if (originalRequest?._skipRefreshRetry) {
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 401 && !originalRequest._retry) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {

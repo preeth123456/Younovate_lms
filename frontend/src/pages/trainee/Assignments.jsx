@@ -1,6 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useAppSelector } from '../../app/hooks';
+import { selectToken } from '../../features/auth/authSlice';
+import { API_BASE_URL } from '../../config/api';
 
 const TraineeAssignments = () => {
+  const token = useAppSelector(selectToken);
   const [assignments, setAssignments] = useState([]);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
@@ -9,13 +14,16 @@ const TraineeAssignments = () => {
     const fetchData = async () => {
       setStatus('loading');
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/assignments', {
-          headers: { Authorization: `Bearer ${token}` },
+        // Same auth pattern as every working slice: Redux token first
+        // (always set on login), localStorage only as "Remember me" fallback.
+        // Same absolute API base; same { success, assignments: [...] } shape.
+        const t = token || localStorage.getItem('token');
+        const res = await fetch(`${API_BASE_URL}/api/assignments`, {
+          headers: { Authorization: `Bearer ${t}` },
         });
         if (!res.ok) throw new Error('Failed to fetch assignments');
         const data = await res.json();
-        setAssignments(data);
+        setAssignments(Array.isArray(data) ? data : (data.assignments || []));
         setStatus('succeeded');
       } catch (err) {
         setError(err.message);
@@ -23,14 +31,18 @@ const TraineeAssignments = () => {
       }
     };
     fetchData();
-  }, []);
+  }, [token]);
 
   if (status === 'loading') return <div className="p-6 text-gray-500">Loading assignments…</div>;
   if (status === 'failed')  return <div className="p-6 text-red-500">Error: {error}</div>;
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">My Assignments</h1>
+      <h1 className="text-2xl font-bold mb-2">My Assignments</h1>
+      <p className="text-sm text-gray-500 mb-4">
+        Session file assignments are below. Module theory + practical assessments live{' '}
+        <Link to="/trainee/module-assessments" style={{ color: '#1d4ed8', fontWeight: 700 }}>here</Link>.
+      </p>
       {assignments.length === 0 ? (
         <p className="text-gray-500">No assignments found.</p>
       ) : (

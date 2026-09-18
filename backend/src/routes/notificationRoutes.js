@@ -47,6 +47,20 @@ router.get('/unread-count', async (req, res) => {
   }
 });
 
+// PUT /api/notifications/read-all — mark all notifications as read
+// NOTE: declared BEFORE '/:id/read' so Express doesn't treat 'read-all' as an :id.
+router.put('/read-all', async (req, res) => {
+  try {
+    await Notification.updateMany(
+      { userId: req.user._id, read: false },
+      { read: true, readAt: new Date() }
+    );
+    return res.json({ success: true, message: 'All notifications marked as read' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // PUT /api/notifications/:id/read — mark notification as read
 router.put('/:id/read', async (req, res) => {
   try {
@@ -62,19 +76,6 @@ router.put('/:id/read', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Notification not found' });
     }
     return res.json({ success: true, notification });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// PUT /api/notifications/read-all — mark all notifications as read
-router.put('/read-all', async (req, res) => {
-  try {
-    await Notification.updateMany(
-      { userId: req.user._id, read: false },
-      { read: true, readAt: new Date() }
-    );
-    return res.json({ success: true, message: 'All notifications marked as read' });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }

@@ -141,6 +141,19 @@ router.post('/', protect, adminOnly, asyncH(async (req, res) => {
   if (body.code) body.code = String(body.code).toUpperCase().trim();
   try {
     const course = await Course.create(body);
+    // Admin monitoring inbox (best-effort).
+    try {
+      const { notifyAdmins, idOf } = require('../utils/notificationService');
+      const User = require('../models/User');
+      await notifyAdmins({
+        User, module: 'LMS', kind: 'lms_course_created',
+        title: 'New LMS Course Created',
+        message: `Course "${course.name}" (${course.code}) has been created.`,
+        dedupeKey: `lms:course:${idOf(course._id)}:created`,
+        link: '/admin/courses',
+        meta: { courseId: idOf(course._id), courseName: course.name, entityType: 'course' },
+      });
+    } catch (_) {}
     saved(res, course, 201);
   } catch (err) {
     if (err && err.code === 11000) {

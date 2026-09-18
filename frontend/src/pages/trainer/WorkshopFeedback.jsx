@@ -14,11 +14,11 @@ const API = API_BASE_URL;
 
 const CSS = `@keyframes spin{to{transform:rotate(360deg)}} .ws-row:hover{background:#f9fafb!important}`;
 
-function Stars({ rating, size = 13 }) {
+function Stars({ rating, size = 14 }) {
   return (
     <span style={{ display: 'inline-flex', gap: 2 }}>
       {[1,2,3,4,5].map(s => (
-        <i key={s} className={`ti ti-star${s <= rating ? '-filled' : ''}`} style={{ fontSize: size, color: '#d97706' }} />
+        <i key={s} className={`ti ti-star${s <= rating ? '-filled' : ''}`} style={{ fontSize: size, color: '#F59E0B' }} />
       ))}
     </span>
   );
@@ -29,9 +29,9 @@ function RatingBar({ star, count, total }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#374151', width: 10 }}>{star}</span>
-      <i className="ti ti-star-filled" style={{ fontSize: 11, color: '#d97706' }} />
+      <i className="ti ti-star-filled" style={{ fontSize: 11, color: '#F59E0B' }} />
       <div style={{ flex: 1, height: 8, background: '#f3f4f6', borderRadius: 4, overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: '#d97706', borderRadius: 4, transition: 'width .4s ease' }} />
+        <div style={{ width: `${pct}%`, height: '100%', background: '#F59E0B', borderRadius: 4, transition: 'width .4s ease' }} />
       </div>
       <span style={{ fontSize: '0.75rem', color: '#9ca3af', width: 28, textAlign: 'right' }}>{count}</span>
     </div>

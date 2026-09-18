@@ -85,6 +85,19 @@ router.post('/', authorize('admin'), async (req, res) => {
       if (!check.ok) return res.status(400).json({ success: false, message: check.message });
     }
     const batch = await Batch.create(req.body);
+    // Admin inbox (best-effort).
+    try {
+      const { notifyAdmins, idOf } = require('../utils/notificationService');
+      const User = require('../models/User');
+      await notifyAdmins({
+        User, module: 'LMS', kind: 'lms_batch_created',
+        title: 'New Batch Created',
+        message: `Batch "${batch.name}" has been created.`,
+        dedupeKey: `lms:batch:${idOf(batch._id)}:created`,
+        link: '/admin/batches',
+        meta: { batchId: idOf(batch._id), batchName: batch.name, entityType: 'batch' },
+      });
+    } catch (_) {}
     return res.status(201).json({ success: true, data: batch });
   } catch (err) {
     return res.status(400).json({ success: false, message: err.message });

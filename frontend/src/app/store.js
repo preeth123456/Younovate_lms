@@ -5,6 +5,7 @@ import storage from 'redux-persist/lib/storage';
 import { combineReducers } from 'redux';
 
 import authReducer          from '../features/auth/authSlice';
+import notificationsReducer  from '../features/notifications/notificationsSlice';
 import adminReducer         from '../features/admin/adminSlice';
 import adminSessionsReducer from '../features/admin/adminSessionsSlice';   // admin-side (new)
 import hrReducer            from '../features/hr/hrSlice';
@@ -30,6 +31,7 @@ const authPersistConfig = {
 
 const rootReducer = combineReducers({
   auth:            persistReducer(authPersistConfig, authReducer),
+  notifications:   notificationsReducer,
   admin:           adminReducer,
   hr:              hrReducer,
   trainee:         traineeReducer,

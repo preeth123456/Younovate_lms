@@ -60,6 +60,18 @@ router.post('/registrations', async (req, res) => {
     phone: phone || '', programInterest: programInterest || '',
     source: source || 'web', status: 'registered',
   });
+  // Admin monitoring inbox (best-effort — registration still succeeds on failure).
+  try {
+    const { notifyAdmins, idOf } = require('../utils/notificationService');
+    await notifyAdmins({
+      User, module: 'LMS', kind: 'registration_new',
+      title: 'New LMS Registration',
+      message: `${reg.fullName} registered (${reg.email}).`,
+      dedupeKey: `lms:registration:${idOf(reg._id)}`,
+      link: '/admin/registrations',
+      meta: { registrationId: idOf(reg._id), email: reg.email, entityType: 'registration' },
+    });
+  } catch (_) {}
   return res.status(201).json({ success: true, message: 'Registration submitted', data: reg });
 });
 
@@ -336,6 +348,29 @@ router.get('/registrations/:id', async (req, res) => {
 router.patch('/registrations/:id', async (req, res) => {
   const reg = await Registration.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
   if (!reg) return res.status(404).json({ success: false, message: 'Registration not found' });
+  // Status-change inbox (best-effort): enrolled trainee + admins monitoring.
+  try {
+    const { notifyUsers, notifyAdmins, idOf } = require('../utils/notificationService');
+    if (req.body && req.body.status && reg.traineeId) {
+      await notifyUsers([{
+        userId: reg.traineeId, role: 'trainee', module: 'LMS',
+        type: 'registration_status', kind: 'lms_registration_status',
+        title: 'Registration Status Updated',
+        message: `Your registration status is now "${req.body.status}".`,
+        dedupeKey: `lms:registration:${idOf(reg._id)}:status:${req.body.status}:${Date.now()}`,
+        link: '/trainee/dashboard',
+        meta: { registrationId: idOf(reg._id), entityType: 'registration' },
+      }]);
+    }
+    await notifyAdmins({
+      User, module: 'LMS', kind: 'registration_status',
+      title: 'Registration Status Changed',
+      message: `${reg.fullName} (${reg.email}) → ${req.body?.status || reg.status}.`,
+      dedupeKey: `lms:registration:${idOf(reg._id)}:admin:${req.body?.status || reg.status}:${Date.now()}`,
+      link: '/admin/registrations',
+      meta: { registrationId: idOf(reg._id), entityType: 'registration' },
+    });
+  } catch (_) {}
   return res.json({ success: true, data: reg });
 });
 
@@ -359,6 +394,20 @@ router.post('/registrations/:id/convert', async (req, res) => {
 
   reg.status = 'converted'; reg.convertedAt = new Date(); reg.convertedBy = req.user._id; reg.traineeId = user._id;
   await reg.save();
+
+  // Enrolled-trainee inbox (best-effort).
+  try {
+    const { notifyUsers, idOf } = require('../utils/notificationService');
+    await notifyUsers([{
+      userId: user._id, role: user.role || 'trainee', module: 'LMS',
+      type: 'enrollment_approved', kind: 'lms_enrollment_approved',
+      title: 'Enrollment Successful',
+      message: `Welcome${user.name ? `, ${user.name}` : ''}! Your enrollment is complete — please sign in.`,
+      dedupeKey: `lms:registration:${idOf(reg._id)}:enrolled`,
+      link: '/login',
+      meta: { registrationId: idOf(reg._id), entityType: 'registration' },
+    }]);
+  } catch (_) {}
 
   return res.status(201).json({ success: true, message: 'Lead converted to trainee', data: user.toPublic() });
 });
@@ -771,6 +820,20 @@ router.post('/trainers/:id/assign-batch', async (req, res) => {
       { $addToSet: { batchIds: batch._id } }
     );
 
+    // Trainer inbox (best-effort).
+    try {
+      const { notifyUsers, idOf } = require('../utils/notificationService');
+      await notifyUsers([{
+        userId: trainer._id, role: 'trainer', module: 'LMS',
+        type: 'batch_assigned', kind: 'lms_trainer_batch_assigned',
+        title: 'Assigned to a Batch',
+        message: `You have been assigned to batch "${batch.name}".`,
+        dedupeKey: `lms:batch:${idOf(batch._id)}:trainer:${idOf(trainer._id)}`,
+        link: '/trainer/batches',
+        meta: { batchId: idOf(batch._id), batchName: batch.name, entityType: 'batch' },
+      }]);
+    } catch (_) {}
+
     return res.status(200).json({
       success: true,
       message: 'Trainer assigned successfully',
@@ -810,6 +873,32 @@ router.post('/trainees/assign-batch', async (req, res) => {
     // matchedCount reflects how many selected trainees were valid (even if they
     // were already in this batch); modifiedCount counts only newly-added ones.
     const assignedCount = result.matchedCount ?? result.modifiedCount ?? 0;
+
+    // Trainee + trainer inbox (best-effort — assignment still succeeds on failure).
+    try {
+      const { notifyUsers, idOf } = require('../utils/notificationService');
+      const items = traineeIds.map((id) => ({
+        userId: id, role: 'trainee', module: 'LMS',
+        type: 'batch_assigned', kind: 'lms_batch_assigned',
+        title: 'Added to a Batch',
+        message: `You have been added to batch "${batch.name}".`,
+        dedupeKey: `lms:batch:${idOf(batch._id)}:trainee:${id}`,
+        link: '/trainee/dashboard',
+        meta: { batchId: idOf(batch._id), batchName: batch.name, entityType: 'batch' },
+      }));
+      if (batch.trainerId) {
+        items.push({
+          userId: batch.trainerId, role: 'trainer', module: 'LMS',
+          type: 'batch_trainees_added', kind: 'lms_batch_trainees_added',
+          title: 'Trainees Added to Your Batch',
+          message: `${assignedCount} trainee(s) were added to batch "${batch.name}".`,
+          dedupeKey: `lms:batch:${idOf(batch._id)}:trainees-added:${Date.now()}`,
+          link: '/trainer/batches',
+          meta: { batchId: idOf(batch._id), entityType: 'batch' },
+        });
+      }
+      await notifyUsers(items);
+    } catch (_) {}
 
     return res.json({
       success: true,

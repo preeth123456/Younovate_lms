@@ -502,6 +502,20 @@ router.post(
       .populate('trainee', 'name email')
       .populate('course',  'name code');
 
+    // Trainee inbox (best-effort — assignment still succeeds on failure).
+    try {
+      const { notifyUsers, idOf } = require('../utils/notificationService');
+      await notifyUsers([{
+        userId: traineeId, role: 'trainee', module: 'LMS',
+        type: 'course_assigned', kind: 'lms_course_assigned',
+        title: 'New Course Assigned',
+        message: `You have been enrolled in "${course.name}".`,
+        dedupeKey: `lms:course:${idOf(courseId)}:trainee:${traineeId}`,
+        link: '/trainee/courses',
+        meta: { courseId: idOf(courseId), courseName: course.name, entityType: 'course' },
+      }]);
+    } catch (_) {}
+
     return ok(res, {
       message:      `Course access assigned to ${trainee.name}`,
       subscription: sub,

@@ -29,8 +29,17 @@ function buildRecordingUrl(relPath) {
   return `${BASE_RECORDING_URL}/recordings/${relPath}`;
 }
 
-// ── S3 / cloud storage (opt-in via USE_S3_RECORDING=true) ───────────────────
+// ── S3 / cloud storage ───────────────────────────────────────────────────────
+// LiveKit Cloud egress has no access to the local ./lms-recordings bind
+// mount, so Cloud mode ALWAYS records to S3 (existing S3 configuration).
+// Docker stays an optional local path: only when LIVEKIT_URL is localhost
+// does USE_S3_RECORDING=false fall back to local disk.
+function isCloudLiveKitUrl() {
+  return String(process.env.LIVEKIT_URL || '').includes('livekit.cloud');
+}
+
 function useS3Recording() {
+  if (isCloudLiveKitUrl()) return true;
   return process.env.USE_S3_RECORDING === 'true';
 }
 

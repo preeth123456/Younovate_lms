@@ -597,6 +597,22 @@ router.post('/workshop-feedback', async (req, res) => {
       suggestions: suggestions || '',
     });
 
+    // Trainer inbox: new workshop feedback (best-effort).
+    try {
+      const notify = require('../utils/notificationService');
+      if (session.trainerId) {
+        await notify.notifyUsers([{
+          userId: session.trainerId, role: 'trainer', module: 'Workshop',
+          type: 'feedback_received', kind: 'workshop_feedback_received',
+          title: 'New Workshop Feedback',
+          message: `${req.user?.name || 'A trainee'} submitted feedback for "${session.title}".`,
+          dedupeKey: `workshop:feedback:${notify.idOf(session._id)}:${notify.idOf(req.user._id)}`,
+          link: '/trainer/workshops/feedback',
+          meta: { sessionId: notify.idOf(session._id), entityType: 'feedback' },
+        }]);
+      }
+    } catch (_) {}
+
     return res.status(201).json({ success: true, feedback });
   } catch (err) {
     if (err.code === 11000) {
@@ -677,6 +693,22 @@ router.post('/lms-feedback', async (req, res) => {
       comment: comment || '',
       suggestions: suggestions || '',
     });
+
+    // Trainer inbox: new feedback on their session (best-effort).
+    try {
+      const notify = require('../utils/notificationService');
+      if (session.trainerId) {
+        await notify.notifyUsers([{
+          userId: session.trainerId, role: 'trainer', module: 'LMS',
+          type: 'feedback_received', kind: 'lms_feedback_received',
+          title: 'New Session Feedback',
+          message: `${req.user?.name || 'A trainee'} submitted feedback for "${session.title}".`,
+          dedupeKey: `lms:feedback:${notify.idOf(session._id)}:${notify.idOf(req.user._id)}`,
+          link: '/trainer/feedback',
+          meta: { sessionId: notify.idOf(session._id), entityType: 'feedback' },
+        }]);
+      }
+    } catch (_) {}
 
     return res.status(201).json({ success: true, feedback });
   } catch (err) {
@@ -830,6 +862,70 @@ router.get('/sessions/:id/join-status', async (req, res) => {
         durationMinutes: session.durationMinutes,
         title: session.title,
       },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/trainee/courses — ONLY the logged-in trainee's enrolled LMS courses.
+// Source of truth (union, no hardcoding, no client-supplied IDs):
+//   1. Enrollment docs  { student: req.user._id }  (legacy/granular progress link)
+//   2. CourseSubscription docs { trainee: req.user._id, status: 'active' }
+//      (current LMS enrollment flow — admin assign + public LMS registration)
+//   3. Batch assignment: batches in req.user.batchIds whose `course` value matches
+//      a Course code (Batch.course is a string code, e.g. 'JAVA'), resolved to
+//      Course docs by code.
+// A trainee with no enrollment in any of these gets [] → existing empty-state UI.
+// NEVER falls back to all courses.
+router.get('/courses', async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const [enrollments, subs, myBatches] = await Promise.all([
+      Enrollment.find({ student: userId }).select('course progressPercent').lean(),
+      // CourseSubscription is the current enrollment record (status 'active';
+      // treat a missing/expired endDate via the isActive virtual).
+      require('../models/CourseSubscription')
+        .find({ trainee: userId, status: 'active' })
+        .select('course endDate status')
+        .lean(),
+      Batch.find({ _id: { $in: req.user.batchIds || [] } }).select('course').lean(),
+    ]);
+
+    const courseIds = new Set();
+    enrollments.forEach((e) => {
+      if (e.course) courseIds.add(String(e.course));
+    });
+    subs.forEach((s) => {
+      if (!s.course) return;
+      if (s.endDate && new Date(s.endDate) <= new Date()) return; // expired
+      courseIds.add(String(s.course));
+    });
+
+    const batchCodes = [...new Set(
+      (myBatches || []).map((b) => String(b.course || '').trim()).filter(Boolean)
+    )];
+    if (batchCodes.length) {
+      const codeCourses = await Course.find({ code: { $in: batchCodes } }).select('_id').lean();
+      codeCourses.forEach((c) => courseIds.add(String(c._id)));
+    }
+
+    if (!courseIds.size) return res.json({ success: true, courses: [] });
+
+    const courses = await Course.find({ _id: { $in: [...courseIds] } })
+      .select('name code level status duration durationUnit')
+      .sort({ name: 1 })
+      .lean();
+
+    const progressByCourse = {};
+    enrollments.forEach((e) => {
+      if (e.course) progressByCourse[String(e.course)] = e.progressPercent || 0;
+    });
+
+    return res.json({
+      success: true,
+      courses: courses.map((c) => ({ ...c, progress: progressByCourse[String(c._id)] || 0 })),
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });

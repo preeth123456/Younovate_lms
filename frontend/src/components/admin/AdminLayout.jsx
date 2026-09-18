@@ -32,6 +32,8 @@ const NAV = [
       },
       { to: '/admin/sessions',      icon: 'video',         label: 'Sessions'      },
       { to: '/admin/attendance',    icon: 'calendar-check', label: 'Attendance'    },
+      { to: '/admin/assignments',   icon: 'clipboard-list', label: 'Assignments'   },
+      { to: '/admin/module-assessments', icon: 'file-analytics', label: 'Assessments' },
       { to: '/admin/feedback',      icon: 'star',           label: 'Feedback'      },
       { to: '/admin/registrations', icon: 'clipboard-list',label: 'Registrations' },
     ],

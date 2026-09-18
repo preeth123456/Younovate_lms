@@ -13,6 +13,8 @@ const NAV = [
     items: [
       { to: '/trainer/sessions',   icon: 'video',           label: 'Sessions'   },
       { to: '/trainer/attendance', icon: 'clipboard-check', label: 'Attendance' },
+      { to: '/trainer/assignments', icon: 'clipboard-list', label: 'Assignments' },
+      { to: '/trainer/module-assessments', icon: 'file-analytics', label: 'Assessments' },
       { to: '/trainer/recordings', icon: 'record-actor',    label: 'Recordings' },
       { to: '/trainer/feedback',   icon: 'star',            label: 'Feedback'   },
       { to: '/trainer/batches',    icon: 'stack-2',         label: 'My Batches' },

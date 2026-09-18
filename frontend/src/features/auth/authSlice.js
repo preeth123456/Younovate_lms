@@ -77,7 +77,11 @@ export const login = createAsyncThunk(
       const { data } = await axios.post(`${API}/api/auth/login`, {
         email,
         password,
-      });
+      },
+      // Skip the global 401→refresh retry for login: a 401 here means
+      // "Wrong credentials" and must reject immediately so the page stops
+      // loading and shows the inline error instead of hanging on refresh.
+      { _skipRefreshRetry: true });
       // data = { success, accessToken, user, role }
 
       // Only persist when "remember" is set; otherwise session uses Redux + refresh cookie.
@@ -87,7 +91,7 @@ export const login = createAsyncThunk(
       return data;
     } catch (err) {
       return rejectWithValue(
-        err.response?.data?.message || 'Invalid email or password.'
+        err.response?.data?.message || err.response?.data?.error || 'Wrong credentials'
       );
     }
   }

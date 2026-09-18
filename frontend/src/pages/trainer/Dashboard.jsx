@@ -45,7 +45,10 @@ import {
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const LIVEKIT_URL = process.env.REACT_APP_LIVEKIT_URL || '';
+// Backend always returns the LiveKit Cloud wss:// URL with the token.
+// Env is only a last-resort fallback — never localhost (no Docker dependency).
+const ENV_LIVEKIT_URL = process.env.REACT_APP_LIVEKIT_URL || '';
+const LIVEKIT_URL = /localhost|127\.0\.0\.1|7880/i.test(ENV_LIVEKIT_URL) ? '' : ENV_LIVEKIT_URL;
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -310,16 +313,16 @@ const LiveRoom = ({ session, isHost = false, onClose, onEndSession, initialToken
           if (status === 'available' || rec?.status === 'completed') setRecordingState('none');
           else if (status === 'failed') setRecordingState('none');
           else setRecordingState('processing');
-        } else setRecordingError(res.data?.message || 'Failed to stop recording');
+        } else setRecordingError(res.data?.message || 'Unable to start recording. Please try again.');
       } else if (recordingState === 'none') {
         const res = await axios.post(`${API_BASE_URL}/api/trainer/sessions/${session._id}/recording/start`, {}, {
           headers: { Authorization: `Bearer ${authToken}` },
         });
         if (res.data?.success) setRecordingState('recording');
-        else setRecordingError(res.data?.message || 'Failed to start recording');
+        else setRecordingError(res.data?.message || 'Unable to start recording. Please try again.');
       }
     } catch (e) {
-      setRecordingError(e.response?.data?.message || e.message || 'Recording action failed');
+      setRecordingError(e.response?.data?.message || 'Unable to start recording. Please try again.');
     } finally {
       setRecordingLoading(false);
     }
@@ -347,7 +350,7 @@ const LiveRoom = ({ session, isHost = false, onClose, onEndSession, initialToken
         setToken(payload.token);
         setUrl(payload.url || payload.serverUrl || LIVEKIT_URL);
       } catch (e) {
-        if (!cancelled) setErr(e?.response?.data?.message || e.message || 'Failed to start the live session.');
+        if (!cancelled) setErr('Unable to connect to the live session. Please try again.');
       }
     })();
     return () => { cancelled = true; };
@@ -424,6 +427,7 @@ const LiveRoom = ({ session, isHost = false, onClose, onEndSession, initialToken
             connect={true}
             video={true}
             audio={true}
+            onError={() => setErr('Unable to connect to the live session. Please try again.')}
             onDisconnected={onClose}
             data-lk-theme="default"
             style={{ height: '100%' }}

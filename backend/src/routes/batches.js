@@ -60,6 +60,21 @@ router.post('/:id/trainees', auth, async (req, res) => {
     );
 
     const students = await User.find({ batchIds: batch._id }).select('name email placementStatus');
+
+    // Trainee inbox (best-effort — assignment still succeeds on failure).
+    try {
+      const { notifyUsers, idOf } = require('../utils/notificationService');
+      await notifyUsers(traineeIds.map((id) => ({
+        userId: id, role: 'trainee', module: 'LMS',
+        type: 'batch_assigned', kind: 'lms_batch_assigned',
+        title: 'Added to a Batch',
+        message: `You have been added to batch "${batch.name}".`,
+        dedupeKey: `lms:batch:${idOf(batch._id)}:trainee:${id}`,
+        link: '/trainee/dashboard',
+        meta: { batchId: idOf(batch._id), batchName: batch.name, entityType: 'batch' },
+      })));
+    } catch (_) {}
+
     return res.json({ batch, students, count: students.length });
   } catch (err) {
     console.error('assign batch trainees error →', err);

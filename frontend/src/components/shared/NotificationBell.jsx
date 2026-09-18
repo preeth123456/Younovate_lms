@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import axios from 'axios';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { useNotificationEvent } from '../../hooks/useNotificationSocket';
+import { pushNotification } from '../../features/notifications/notificationsSlice';
 
 const DEFAULT_DEV_API_BASE = 'http://localhost:8080';
 const PRODUCTION_API_BASE = 'https://younovate-lms.onrender.com';
@@ -72,6 +74,7 @@ function fmtTime(dateStr) {
 }
 
 export default function NotificationBell() {
+  const dispatch = useDispatch();
   const token = useSelector(s => s.auth?.token || '');
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState([]);
@@ -125,8 +128,11 @@ export default function NotificationBell() {
 
   const handleItemClick = (notification) => {
     if (!notification.read) handleRead(notification._id);
-    if (notification.actionUrl) {
-      window.location.href = notification.actionUrl;
+    // Bell links are trusted app-relative routes only (same guard as the
+    // sidebar inbox) — never navigate to external URLs from a notification.
+    const url = notification.link || notification.actionUrl;
+    if (typeof url === 'string' && url.startsWith('/')) {
+      window.location.assign(url);
     }
     setOpen(false);
   };
@@ -136,6 +142,28 @@ export default function NotificationBell() {
     const interval = setInterval(fetchUnreadCount, 30000);
     return () => clearInterval(interval);
   }, [fetchUnreadCount]);
+
+  // Realtime: backend `notification:new` → prepend + bump badge without refresh.
+  // useNotificationSocket() (mounted once in SidebarLayout) owns the socket
+  // lifecycle; this listener only mirrors events into this bell's local state.
+  const openRef = useRef(open);
+  openRef.current = open;
+  const fetchNotificationsRef = useRef(fetchNotifications);
+  fetchNotificationsRef.current = fetchNotifications;
+  const handleRealtime = useCallback((data) => {
+    if (data?._id) {
+      setNotifications((prev) => {
+        if (prev.some((x) => String(x._id) === String(data._id))) return prev;
+        return [{ ...data, read: false }, ...prev].slice(0, 20);
+      });
+      setUnreadCount((c) => c + 1);
+      try { dispatch(pushNotification(data)); } catch (_) {}
+    } else {
+      fetchUnreadCount();
+      if (openRef.current) fetchNotificationsRef.current();
+    }
+  }, [dispatch, fetchUnreadCount]);
+  useNotificationEvent(handleRealtime);
 
   useEffect(() => {
     if (open) fetchNotifications();

@@ -65,6 +65,34 @@ router.post('/', authorize('admin'), async (req, res) => {
 
   const session = await Session.create({ ...req.body, sessionType: 'LMS' });
   await session.populate('trainerId', 'name');
+  // Persistent inbox (best-effort — session creation still succeeds if this fails).
+  try {
+    const notify = require('../utils/notificationService');
+    const User = require('../models/User');
+    const trainees = session.batchId
+      ? await User.find({ role: 'trainee', isActive: true, batchIds: session.batchId }).select('_id').lean()
+      : [];
+    await notify.notifyUsers([
+      {
+        userId: session.trainerId?._id || session.trainerId, role: 'trainer', module: 'LMS',
+        type: 'session_scheduled', kind: 'lms_session_scheduled',
+        title: 'New LMS Session Assigned',
+        message: `You have a new LMS session: ${session.title}.`,
+        dedupeKey: `lms:session:${notify.idOf(session._id)}:trainer`,
+        link: '/trainer/sessions',
+        meta: { sessionId: notify.idOf(session._id), batchId: notify.idOf(session.batchId), entityType: 'session' },
+      },
+      ...trainees.map((t) => ({
+        userId: t._id, role: 'trainee', module: 'LMS',
+        type: 'session_scheduled', kind: 'lms_session_scheduled',
+        title: 'New LMS Session Scheduled',
+        message: `A new LMS session "${session.title}" has been scheduled for your batch.`,
+        dedupeKey: `lms:session:${notify.idOf(session._id)}:trainee:${t._id}`,
+        link: '/trainee/sessions',
+        meta: { sessionId: notify.idOf(session._id), batchId: notify.idOf(session.batchId), entityType: 'session' },
+      })),
+    ]);
+  } catch (_) {}
   emitToRole('trainer', 'notification', { type: 'info', message: `New session scheduled: ${session.title}` });
   return res.status(201).json({ success: true, session });
 });
@@ -85,6 +113,31 @@ router.put('/:id', authorize('admin'), async (req, res) => {
     { new: true, runValidators: true }
   ).populate('trainerId', 'name');
   if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
+  // Reschedule / cancel inbox (best-effort). Only "live" is sent on actual Start.
+  try {
+    const notify = require('../utils/notificationService');
+    const User = require('../models/User');
+    const changed = update.scheduledAt ? 'rescheduled' : (String(update.status || '').toLowerCase() === 'cancelled' ? 'cancelled' : 'updated');
+    const trainees = session.batchId
+      ? await User.find({ role: 'trainee', isActive: true, batchIds: session.batchId }).select('_id').lean()
+      : [];
+    const recips = [
+      { userId: session.trainerId?._id || session.trainerId, role: 'trainer', link: '/trainer/sessions', dk: 'trainer' },
+      ...trainees.map((t) => ({ userId: t._id, role: 'trainee', link: '/trainee/sessions', dk: `trainee:${t._id}` })),
+    ];
+    await notify.notifyUsers(recips.filter((r) => r.userId).map((r) => ({
+      userId: r.userId, role: r.role, module: 'LMS',
+      type: changed === 'cancelled' ? 'session_cancelled' : 'session_rescheduled',
+      kind: changed === 'cancelled' ? 'lms_session_cancelled' : 'lms_session_rescheduled',
+      title: changed === 'cancelled' ? 'LMS Session Cancelled' : 'LMS Session Rescheduled',
+      message: changed === 'cancelled'
+        ? `LMS session "${session.title}" has been cancelled.`
+        : `LMS session "${session.title}" has been updated${update.scheduledAt ? ` — new time ${notify.fmtDT(session.scheduledAt)}` : ''}.`,
+      dedupeKey: `lms:session:${notify.idOf(session._id)}:${changed}:${Date.now()}:${r.dk}`,
+      link: r.link,
+      meta: { sessionId: notify.idOf(session._id), batchId: notify.idOf(session.batchId), entityType: 'session' },
+    })));
+  } catch (_) {}
   return res.json({ success: true, session });
 });
 

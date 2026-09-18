@@ -632,6 +632,21 @@ router.put('/admin/registrations/:id', protect, authorize('admin'), async (req, 
       if (devTemporaryPassword && process.env.NODE_ENV !== 'production') {
         response.temporaryPassword = devTemporaryPassword;
       }
+      // Trainee inbox: workshop approval (best-effort — approval still succeeds).
+      try {
+        const { notifyUsers, idOf } = require('../utils/notificationService');
+        if (updated.userId) {
+          await notifyUsers([{
+            userId: updated.userId, role: 'trainee', module: 'Workshop',
+            type: 'workshop_approved', kind: 'workshop_registration_approved',
+            title: 'Workshop Registration Approved',
+            message: `Your registration for "${updated.workshopName || updated.workshopId?.title || 'the workshop'}" has been approved.`,
+            dedupeKey: `workshop:registration:${idOf(updated._id)}:approved`,
+            link: '/trainee/dashboard',
+            meta: { registrationId: idOf(updated._id), entityType: 'registration' },
+          }]);
+        }
+      } catch (_) {}
     }
 
     return res.json(response);
@@ -883,6 +898,21 @@ router.patch('/batches/:batchId/assign-trainer', protect, authorize('admin'), as
     ).populate('workshopId', 'title date mode').populate('trainerId', 'name email').populate('assignedBy', 'name email');
 
     if (!batch) return res.status(404).json({ success: false, message: 'Workshop Batch not found.' });
+
+    // Trainer inbox (best-effort — assignment still succeeds on failure).
+    try {
+      const { notifyUsers, idOf } = require('../utils/notificationService');
+      await notifyUsers([{
+        userId: trainerId, role: 'trainer', module: 'Workshop',
+        type: 'batch_assigned', kind: 'workshop_trainer_batch_assigned',
+        title: isReassign ? 'Workshop Batch Reassigned' : 'Assigned to a Workshop Batch',
+        message: `You have been ${isReassign ? 'reassigned' : 'assigned'} to workshop batch "${batch.batchName}".`,
+        dedupeKey: `workshop:batch:${idOf(batch._id)}:trainer:${idOf(trainerId)}`,
+        link: '/trainer/workshop-batches',
+        meta: { batchId: idOf(batch._id), entityType: 'batch' },
+      }]);
+    } catch (_) {}
+
     return res.json({ success: true, isReassign, data: batch });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -1053,6 +1083,33 @@ router.post('/batches', protect, authorize('admin'), async (req, res) => {
     }
 
     const batch = await WorkshopBatch.create(batchData);
+
+    // Trainer + trainee inbox (best-effort — batch creation still succeeds).
+    try {
+      const { notifyUsers, idOf } = require('../utils/notificationService');
+      const items = [];
+      if (resolvedTrainerId) {
+        items.push({
+          userId: resolvedTrainerId, role: 'trainer', module: 'Workshop',
+          type: 'batch_assigned', kind: 'workshop_trainer_batch_assigned',
+          title: 'Assigned to a Workshop Batch',
+          message: `You have been assigned to workshop batch "${batch.batchName}".`,
+          dedupeKey: `workshop:batch:${idOf(batch._id)}:trainer:${idOf(resolvedTrainerId)}`,
+          link: '/trainer/workshop-batches',
+          meta: { batchId: idOf(batch._id), entityType: 'batch' },
+        });
+      }
+      userIds.forEach((id) => items.push({
+        userId: id, role: 'trainee', module: 'Workshop',
+        type: 'batch_assigned', kind: 'workshop_batch_assigned',
+        title: 'Added to a Workshop Batch',
+        message: `You have been added to workshop batch "${batch.batchName}".`,
+        dedupeKey: `workshop:batch:${idOf(batch._id)}:trainee:${id}`,
+        link: '/trainee/dashboard',
+        meta: { batchId: idOf(batch._id), entityType: 'batch' },
+      }));
+      await notifyUsers(items);
+    } catch (_) {}
 
     return res.status(201).json({ success: true, message: 'Batch created successfully.', data: batch });
   } catch (err) {

@@ -1,22 +1,17 @@
 // src/features/trainee/Trainee_Courses.jsx
-import React, { useEffect } from "react";
-import { useDispatch, useSelector } from "react-redux";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  fetchCourses,
-  selectAllCourses,
-  selectCoursesStatus,
-  selectCoursesError,
-} from "../../features/admin/courseSlice";
+import { useSelector } from "react-redux";
+import axios from "axios";
+import { API_BASE_URL } from "../../config/api";
 
 /* ──────────────────────────────────────────────────────────────────────────
    NOTE ON PROGRESS
    Your course schema is { _id, name, code, level, status, duration, modules[] }
    — it has no per-trainee progress field. The upGrad UI shows a completion %,
    which normally lives on the *enrollment* record, not the course.
-   This card reads `course.progress` and falls back to 0, so it renders correctly
-   the moment that field is supplied (e.g. from a /api/trainee/courses endpoint
-   that joins progress). Until then, every bar will read 0%.
+   GET /api/trainee/courses joins that progress (Enrollment.progressPercent)
+   onto each enrolled course; this card falls back to 0 when absent.
    ────────────────────────────────────────────────────────────────────────── */
 
 const getProgress = (course) => {
@@ -29,17 +24,33 @@ const getProgress = (course) => {
 };
 
 const Trainee_Courses = () => {
-  const dispatch = useDispatch();
-  const courses = useSelector(selectAllCourses);
-  const status = useSelector(selectCoursesStatus);
-  const error = useSelector(selectCoursesError);
+  // My Courses = ONLY this trainee's enrolled courses.
+  // Uses GET /api/trainee/courses (authenticated trainee, server-filtered) —
+  // NEVER the all-courses list. Shared admin courseSlice state is untouched.
+  const token = useSelector((s) => s.auth?.token);
+  const [courses, setCourses] = useState([]);
+  const [status, setStatus] = useState("idle");
+  const [error, setError] = useState(null);
+
+  const load = async () => {
+    setStatus("loading");
+    setError(null);
+    try {
+      const { data } = await axios.get(`${API_BASE_URL}/api/trainee/courses`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      setCourses(Array.isArray(data?.courses) ? data.courses : []);
+      setStatus("succeeded");
+    } catch (err) {
+      setError(err.response?.data?.message || "Something went wrong.");
+      setStatus("failed");
+    }
+  };
 
   useEffect(() => {
-    if (status === "idle") {
-      // limit: 0 → fetch all (matches your slice's documented param)
-      dispatch(fetchCourses({ limit: 0 }));
-    }
-  }, [status, dispatch]);
+    if (status === "idle") load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // inside the component:
 const navigate = useNavigate();
@@ -70,7 +81,7 @@ const navigate = useNavigate();
             <p style={styles.stateSub}>{error || "Something went wrong."}</p>
             <button
               style={styles.retryBtn}
-              onClick={() => dispatch(fetchCourses({ limit: 0 }))}
+              onClick={load}
             >
               Retry
             </button>

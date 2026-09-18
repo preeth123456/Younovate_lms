@@ -35,6 +35,7 @@ export default function LoginPage() {
   const [errors, setErrors]     = useState({});
   const [remember, setRemember] = useState(false);
   const [showPw, setShowPw]     = useState(false);
+  const [authError, setAuthError] = useState('');
 
   useEffect(() => {
     if (isAuthenticated && role) {
@@ -47,8 +48,12 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, role, currentUser, navigate]);
 
+  // ── Auth errors: mirror the Redux error into a visible inline message near
+  // the form. The slice already resets status to 'idle' on rejected, so the
+  // spinner stops; this guarantees "Wrong credentials" is shown on the page.
   useEffect(() => {
     if (error) {
+      setAuthError(error);
       toast.error(error);
       dispatch(clearError());
     }
@@ -66,6 +71,7 @@ export default function LoginPage() {
     const { name, value } = e.target;
     setForm(prev => ({ ...prev, [name]: value }));
     if (errors[name]) setErrors(prev => ({ ...prev, [name]: '' }));
+    if (authError) setAuthError('');
   };
 
   const handleSubmit = async (e) => {
@@ -73,9 +79,18 @@ export default function LoginPage() {
     const errs = validate();
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
+    // Reset the previous attempt's message. The slice sets status back to
+    // 'idle' on both fulfilled and rejected, so loading always stops.
+    setAuthError('');
+
     const result = await dispatch(login({ ...form, remember }));
     if (login.fulfilled.match(result)) {
+      setAuthError('');
       toast.success('Welcome back!');
+    } else if (login.rejected.match(result)) {
+      // Backend returns { message: 'Wrong credentials' } for both unknown
+      // email and bad password — display it inline and stay on this page.
+      setAuthError(result.payload || error || 'Wrong credentials');
     }
   };
 
@@ -149,6 +164,12 @@ export default function LoginPage() {
               }
             </button>
 
+            {authError && (
+              <p className="yn-err yn-auth-err" role="alert">
+                <i className="ti ti-alert-circle" />{authError}
+              </p>
+            )}
+
           </form>
 
           <p className="yn-signup">
@@ -219,6 +240,7 @@ const CSS = `
     margin-top: 5px; font-size: 12px; color: #e12e2a; font-weight: 500;
   }
   .yn-err .ti { font-size: 13px; }
+  .yn-auth-err { justify-content: center; margin: 0 0 14px; font-size: 13px; }
 
   .yn-eye { position: absolute; right: 13px; background: none; border: none; color: #7a8ba4; cursor: pointer; padding: 4px; font-size: 16px; line-height: 1; display: flex; align-items: center; }
   .yn-eye:hover { color: #1f3d63; }

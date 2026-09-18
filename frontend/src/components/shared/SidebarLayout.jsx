@@ -20,6 +20,8 @@ import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import { store } from '../../app/store';
 import { logout, logoutUser, selectCurrentUser, selectUserRole } from '../../features/auth/authSlice';
+import { fetchNotifications, markAllNotificationsRead, markNotificationRead } from '../../features/notifications/notificationsSlice';
+import { useNotificationSocket } from '../../hooks/useNotificationSocket';
 import toast from 'react-hot-toast';
 
 // ─── Role → brand colour ──────────────────────────────────────────────────────
@@ -231,13 +233,44 @@ const SearchPanel = ({ value, onChange, onSubmit, onClear, inputRef }) => (
   </div>
 );
 
-// ─── Notifications dropdown (matches reference: ALL / DISCUSSIONS / COURSE) ────
+// ─── Notifications dropdown (existing Notification API + realtime) ────────────
+// Bell inbox: GET /api/notifications (own only), unread badge, mark read /
+// mark-all-read, `notification:new` socket refresh. Reuses existing tab style.
 const NotifPanel = () => {
+  const dispatch = useAppDispatch();
+  const items = useAppSelector((s) => s.notifications?.items ?? []);
+  const unread = useAppSelector((s) => s.notifications?.unreadCount ?? 0);
+  const nStatus = useAppSelector((s) => s.notifications?.status ?? 'idle');
   const [tab, setTab] = useState('all');
   const tabs = [['all', 'All'], ['discussions', 'Discussions'], ['course', 'Course']];
+
+  useEffect(() => { dispatch(fetchNotifications()); }, [dispatch]);
+
+  const filtered = items.filter((n) => {
+    if (tab === 'all') return true;
+    const mod = String(n.module || n.metadata?.module || '').toLowerCase();
+    const kind = String(n.kind || n.type || '').toLowerCase();
+    if (tab === 'course') return mod.includes('lms') || mod.includes('course') || kind.includes('course') || kind.includes('lms') || kind.includes('assess') || kind.includes('assign') || kind.includes('certif');
+    return mod.includes('workshop') || mod.includes('discuss') || kind.includes('session') || kind.includes('feedback') || kind.includes('record');
+  });
+
+  const openNotif = (n) => {
+    if (!n.read) dispatch(markNotificationRead(n._id));
+    const link = n.link || n.actionUrl;
+    // Links are trusted app-relative routes only — never open external URLs.
+    if (link && link.startsWith('/')) window.location.assign(link);
+  };
+
   return (
     <div className="yn-pop yn-notif-pop" role="dialog" aria-label="Notifications">
-      <div className="yn-notif-head"><span className="yn-notif-title">Notifications</span></div>
+      <div className="yn-notif-head">
+        <span className="yn-notif-title">Notifications{unread > 0 ? ` (${unread})` : ''}</span>
+        {unread > 0 && (
+          <button className="yn-notif-markall" onClick={() => dispatch(markAllNotificationsRead())}>
+            Mark all read
+          </button>
+        )}
+      </div>
       <div className="yn-notif-tabs">
         {tabs.map(([id, label]) => (
           <button
@@ -250,7 +283,23 @@ const NotifPanel = () => {
         ))}
       </div>
       <div className="yn-notif-body">
-        <p className="yn-pop-empty">You have no notifications</p>
+        {nStatus === 'loading' && items.length === 0 ? (
+          <p className="yn-pop-empty">Loading…</p>
+        ) : filtered.length === 0 ? (
+          <p className="yn-pop-empty">You have no notifications</p>
+        ) : (
+          filtered.slice(0, 20).map((n) => (
+            <button
+              key={n._id}
+              className={`yn-notif-item${n.read ? '' : ' is-unread'}`}
+              onClick={() => openNotif(n)}
+            >
+              <span className="yn-notif-item-title">{n.title}</span>
+              <span className="yn-notif-item-msg">{n.message}</span>
+              <span className="yn-notif-item-time">{n.createdAt ? new Date(n.createdAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}</span>
+            </button>
+          ))
+        )}
       </div>
     </div>
   );
@@ -311,6 +360,17 @@ export default function SidebarLayout({
   const location  = useLocation();
   const user      = useAppSelector(selectCurrentUser);
   const role      = useAppSelector(selectUserRole);
+  const notifUnread = useAppSelector((s) => s.notifications?.unreadCount ?? 0);
+
+  // Realtime inbox: backend `notification:new` → pushNotification + badge.
+  // Polling fallback every 60s so the badge stays fresh if sockets drop.
+  useNotificationSocket();
+  useEffect(() => {
+    if (!user?._id) return undefined;
+    dispatch(fetchNotifications());
+    const t = setInterval(() => dispatch(fetchNotifications()), 60000);
+    return () => clearInterval(t);
+  }, [dispatch, user?._id]);
 
   const resolvedColor = brandColor || ROLE_COLOR[user?.role] || '#6366F1';
   const initials      = user?.name?.slice(0, 2).toUpperCase() || 'YN';
@@ -504,7 +564,7 @@ export default function SidebarLayout({
               <div ref={notifRef} className="yn-pop-wrap">
                 <button className="yn-icon-btn yn-notif-wrap" aria-label="Notifications" aria-expanded={notifOpen} onClick={toggleNotif}>
                   <Icon name="bell" size={16} />
-                  <span className="yn-notif-dot" />
+                  {notifUnread > 0 && <span className="yn-notif-dot">{notifUnread > 99 ? '99+' : notifUnread}</span>}
                 </button>
                 {notifOpen && <NotifPanel />}
               </div>
@@ -666,7 +726,7 @@ function buildCSS(brandColor) {
 .yn-icon-btn:hover { background: #edf3f9; }
 
 .yn-notif-wrap { position: relative; }
-.yn-notif-dot { position: absolute; top: 8px; right: 8px; width: 7px; height: 7px; background: #EF4444; border-radius: 50%; border: 2px solid #fff; }
+.yn-notif-dot { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; background: #EF4444; color: #fff; font-size: 10px; font-weight: 800; border-radius: 99px; border: 2px solid #fff; display: flex; align-items: center; justify-content: center; line-height: 1; }
 
 /* Popover wrapper (search + notifications) */
 .yn-pop-wrap { position: relative; }
@@ -690,13 +750,21 @@ function buildCSS(brandColor) {
 
 /* Notifications popover */
 .yn-notif-pop { width: 340px; }
-.yn-notif-head { padding: 13px 16px 0; }
+.yn-notif-head { padding: 13px 16px 0; display: flex; align-items: center; justify-content: space-between; }
 .yn-notif-title { font-size: 14px; font-weight: 700; color: #172033; }
+.yn-notif-markall { border: none; background: none; cursor: pointer; font-family: var(--yn-font); font-size: 12px; font-weight: 700; color: var(--yn-brand); padding: 4px 6px; border-radius: 6px; }
+.yn-notif-markall:hover { background: rgba(0,0,0,0.04); }
 .yn-notif-tabs { display: flex; gap: 6px; padding: 10px 14px 12px; border-bottom: 1px solid var(--yn-line); }
 .yn-notif-tab { border: none; background: none; cursor: pointer; font-family: var(--yn-font); font-size: 12px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; color: #94a3b8; padding: 5px 10px; border-radius: 6px; transition: background 0.15s, color 0.15s; }
 .yn-notif-tab:hover { color: #475569; }
 .yn-notif-tab.is-active { background: rgba(${rgb},0.12); color: var(--yn-brand); }
-.yn-notif-body { padding: 34px 16px; }
+.yn-notif-body { padding: 10px 8px; max-height: 320px; overflow-y: auto; }
+.yn-notif-item { width: 100%; display: block; text-align: left; border: none; background: none; cursor: pointer; padding: 10px 12px; border-radius: 8px; font-family: var(--yn-font); }
+.yn-notif-item:hover { background: #f4f8fc; }
+.yn-notif-item.is-unread { background: #f0f7ff; }
+.yn-notif-item-title { display: block; font-size: 13px; font-weight: 700; color: #172033; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.yn-notif-item-msg { display: block; font-size: 12px; color: #657691; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.yn-notif-item-time { display: block; font-size: 11px; color: #94a3b8; margin-top: 3px; }
 
 /* Profile avatar + caret */
 .yn-profile-wrap { position: relative; }
