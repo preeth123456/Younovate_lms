@@ -315,7 +315,7 @@ export default function Trainers() {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="🔎  Search by name, email or specialization…"
+          placeholder="Search by name, email or specialization…"
           style={input}
         />
         <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} style={input}>

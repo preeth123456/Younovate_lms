@@ -1,4 +1,5 @@
 import React from 'react';
+import { createRoot } from 'react-dom/client';
 import { fmtDateLong } from '../../utils/dateTime';
 
 /**
@@ -316,4 +317,37 @@ export default function CourseCertificateTemplate({
       </div>
     </div>
   );
+}
+
+export function openLmsCertificatePrint({ traineeName, courseName, score, completionDate, certificateNo }) {
+  const win = window.open('', '_blank', 'width=1100,height=780');
+  if (!win) {
+    alert('Please allow pop-ups to download the certificate.');
+    return;
+  }
+  win.document.write(`<!DOCTYPE html><html><head><title>Certificate - ${traineeName}</title>
+    <style>
+      @page { size: landscape; margin: 12mm; }
+      @media print {
+        body { margin: 0; padding: 0; background: #fff !important; }
+        .course-certificate-template { box-shadow: none !important; }
+      }
+      body { margin: 0; padding: 16px; background: #e2e8f0; display: flex; justify-content: center; }
+    </style></head><body></body></html>`);
+  win.document.close();
+  const mount = win.document.body;
+  const root = createRoot(mount);
+  root.render(
+    <CourseCertificateTemplate
+      traineeName={traineeName}
+      courseName={courseName}
+      score={score}
+      completionDate={completionDate}
+      certificateNo={certificateNo}
+    />
+  );
+  setTimeout(() => {
+    win.focus();
+    win.print();
+  }, 500);
 }

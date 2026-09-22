@@ -4,6 +4,7 @@ import axios from 'axios';
 import { API_BASE_URL } from '../../config/api';
 import WatchRecordingButton from '../../components/recording/WatchRecordingButton';
 import NotificationBell from '../../components/shared/NotificationBell';
+import AppIcon from '../../components/shared/AppIcon';
 
 // ── LiveKit (third-party real-time video) ─────────────────────────────────────
 import { LiveKitRoom, VideoConference } from '@livekit/components-react';
@@ -45,10 +46,10 @@ import {
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Backend always returns the LiveKit Cloud wss:// URL with the token.
-// Env is only a last-resort fallback — never localhost (no Docker dependency).
+// Backend returns the LiveKit server URL with the token (Docker ws://localhost:7880 locally).
+// Env override only if explicitly set; otherwise the backend URL is used.
 const ENV_LIVEKIT_URL = process.env.REACT_APP_LIVEKIT_URL || '';
-const LIVEKIT_URL = /localhost|127\.0\.0\.1|7880/i.test(ENV_LIVEKIT_URL) ? '' : ENV_LIVEKIT_URL;
+const LIVEKIT_URL = ENV_LIVEKIT_URL;
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -215,12 +216,23 @@ const Spinner = ({ pad = 40, color = '#6366f1' }) => (
   </div>
 );
 
-const Empty = ({ icon, msg }) => (
-  <div style={{ textAlign: 'center', padding: '28px 0', color: '#9ca3af' }}>
-    <div style={{ fontSize: '2rem', marginBottom: 8 }}>{icon}</div>
-    <div style={{ fontSize: '0.8rem', fontWeight: 500 }}>{msg}</div>
-  </div>
-);
+const Empty = ({ icon, iconName, msg }) => {
+  const isAppIcon = !!iconName || (typeof icon === 'string' && !/\p{Extended_Pictographic}/u.test(icon));
+  return (
+    <div style={{ textAlign: 'center', padding: '28px 0', color: '#9ca3af' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
+        {isAppIcon ? (
+          <span style={{ width: 48, height: 48, borderRadius: 14, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <AppIcon name={iconName || icon} size={20} style={{ color: '#64748B' }} />
+          </span>
+        ) : (
+          <span style={{ fontSize: '2rem' }}>{icon}</span>
+        )}
+      </div>
+      <div style={{ fontSize: '0.8rem', fontWeight: 500 }}>{msg}</div>
+    </div>
+  );
+};
 
 const H2 = ({ children }) => (
   <h2 style={{ fontSize: '1rem', fontWeight: 700, color: '#111827', marginBottom: 16, letterSpacing: '-0.2px' }}>
@@ -1555,16 +1567,19 @@ const StudentsTab = () => {
         {q && <span style={{ fontSize: '0.76rem', color: '#9ca3af' }}>{list.length} match{list.length === 1 ? '' : 'es'}</span>}
       </div>
 
-      <input
-        value={q} onChange={e => setQ(e.target.value)}
-        placeholder="Search trainees by name or email…"
-        style={{ width: '100%', border: '1.5px solid #e5e7eb', borderRadius: 8, padding: '9px 14px', fontSize: '0.85rem', color: '#111827', marginBottom: 16, fontFamily: 'inherit' }}
-      />
+      <div style={{ position: 'relative', marginBottom: 16 }}>
+        <AppIcon name="search" size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+        <input
+          value={q} onChange={e => setQ(e.target.value)}
+          placeholder="Search trainees by name or email…"
+          style={{ width: '100%', border: '1.5px solid #e5e7eb', borderRadius: 8, padding: '9px 14px 9px 34px', fontSize: '0.85rem', color: '#111827', fontFamily: 'inherit' }}
+        />
+      </div>
 
       {students.length === 0 ? (
-        <Empty icon="🎓" msg="No trainees found" />
+        <Empty iconName="school" msg="No trainees found" />
       ) : list.length === 0 ? (
-        <Empty icon="🔍" msg="No trainees match your search" />
+        <Empty iconName="search" msg="No trainees match your search" />
       ) : (
         <>
           <div className="td-trainees">

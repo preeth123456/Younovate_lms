@@ -5,6 +5,7 @@ import WorkshopSearch from './_components/WorkshopSearch';
 import WorkshopFilterSelect from './_components/WorkshopFilterSelect';
 import WorkshopStatusBadge from './_components/WorkshopStatusBadge';
 import { btnGhost, tableCard, th, td, emptyCell, input } from './_components/workshopDesignTokens';
+import AppIcon from '../../../components/shared/AppIcon';
 
 function formatDateTime(d) {
   const dt = d instanceof Date ? d : new Date(d);
@@ -119,10 +120,10 @@ export default function WorkshopManagementUpcoming() {
                   <div style={{ marginTop: 4, fontWeight: 800, color: '#64748B', fontSize: 13 }}>Time: {formatTime(w.time)}</div>
                   <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <button type="button" style={actBtn('#E2E8F0', '#0F172A')} onClick={() => onAction(w.id, 'view')}>
-                      👁️ View
+                      <AppIcon name="eye" size={13} style={{ marginRight: 6, verticalAlign: '-2px' }} />View
                     </button>
                     <button type="button" style={actBtn('#FEF3C7', '#B45309')} onClick={() => onAction(w.id, 'edit')}>
-                      ✏️ Edit
+                      <AppIcon name="edit" size={13} style={{ marginRight: 6, verticalAlign: '-2px' }} />Edit
                     </button>
                     <button type="button" style={actBtn('#FEE2E2', '#DC2626', true)} onClick={() => onAction(w.id, 'cancel')}>
                       🛑 Cancel
@@ -174,10 +175,10 @@ export default function WorkshopManagementUpcoming() {
                       <td style={{ ...td, textAlign: 'right' }}>
                         <div style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                           <button type="button" style={actBtn('#E2E8F0', '#0F172A')} onClick={() => onAction(w.id, 'view')}>
-                            👁️ View
+                            <AppIcon name="eye" size={13} style={{ marginRight: 6, verticalAlign: '-2px' }} />View
                           </button>
                           <button type="button" style={actBtn('#EEF2FF', '#6366F1')} onClick={() => onAction(w.id, 'edit')}>
-                            ✏️ Edit
+                            <AppIcon name="edit" size={13} style={{ marginRight: 6, verticalAlign: '-2px' }} />Edit
                           </button>
                           <button type="button" style={actBtn('#FEF3C7', '#B45309')} onClick={() => onAction(w.id, 'cancel')}>
                             🛑 Cancel

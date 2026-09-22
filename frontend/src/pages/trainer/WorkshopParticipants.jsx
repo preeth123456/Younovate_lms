@@ -9,6 +9,7 @@ import {
   selectSelectedWorkshopId,
 } from '../../features/Trainer/trainerWorkshopSlice';
 import { S, Empty, KPICard } from './workshopShared';
+import AppIcon from '../../components/shared/AppIcon';
 
 const CSS = `
   @keyframes spin{to{transform:rotate(360deg)}}
@@ -111,7 +112,7 @@ export default function WorkshopParticipants() {
 
       {/* Search */}
       <div className="part-search" style={{ position: 'relative', maxWidth: 320, marginBottom: 16 }}>
-        <i className="ti ti-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontSize: 14 }} />
+        <AppIcon name="search" size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
         <input
           style={{ ...S.input, paddingLeft: 32 }}
           value={search}

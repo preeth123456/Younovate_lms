@@ -12,6 +12,7 @@ import {
 import {
   C, S, Pill, Spinner, PageHeader, KPICard, StatusBadge, fmtDate,
 } from './workshopShared';
+import AppIcon from '../../components/shared/AppIcon';
 
 const CSS = `@keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}} .ws-row:hover{background:#f9fafb!important} .ws-btn:hover{opacity:.85}`;
 
@@ -94,7 +95,7 @@ export default function MyWorkshops() {
       {/* Filters */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: '1 1 220px' }}>
-          <i className="ti ti-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: C.text4, fontSize: 14 }} />
+          <AppIcon name="search" size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: C.text4 }} />
           <input style={{ ...S.input, paddingLeft: 32 }} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search workshops…" />
         </div>
         <select style={{ ...S.input, flex: '0 0 160px' }} value={fStatus} onChange={e => setFStatus(e.target.value)}>

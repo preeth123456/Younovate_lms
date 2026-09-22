@@ -23,6 +23,7 @@ import { logout, logoutUser, selectCurrentUser, selectUserRole } from '../../fea
 import { fetchNotifications, markAllNotificationsRead, markNotificationRead } from '../../features/notifications/notificationsSlice';
 import { useNotificationSocket } from '../../hooks/useNotificationSocket';
 import toast from 'react-hot-toast';
+import AppIcon from './AppIcon';
 
 // ─── Role → brand colour ──────────────────────────────────────────────────────
 const ROLE_COLOR = {
@@ -51,13 +52,9 @@ function useClickOutside(ref, callback, enabled = true) {
   }, [ref, callback, enabled]);
 }
 
-// ─── Icon ─────────────────────────────────────────────────────────────────────
+// ─── Icon (Lucide via AppIcon — replaces legacy Tabler webfont) ───────────────
 const Icon = ({ name, size = 18, className = '', style = {} }) => (
-  <i
-    className={`ti ti-${name} ${className}`}
-    style={{ fontSize: size, lineHeight: 1, display: 'inline-block', ...style }}
-    aria-hidden="true"
-  />
+  <AppIcon name={name} size={size} className={className} style={style} />
 );
 
 // ─── Single flat nav link ─────────────────────────────────────────────────────

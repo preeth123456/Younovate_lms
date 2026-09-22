@@ -11,6 +11,7 @@ import {
   selectAdminBatches,
 } from '../../features/admin/adminSlice';
 import { API_BASE_URL } from '../../config/api';
+import AppIcon from '../../components/shared/AppIcon';
 
 // ── Role / status palette (same conventions as Sessions' SC) ──────────────────
 const ROLE_COLORS = {
@@ -248,7 +249,7 @@ export default function UserManagement() {
           style={btnStyle('#F8FAFC', '#E2E8F0', '#475569', rowBusy)}
           title="Edit user"
         >
-          ✏️
+          <AppIcon name="edit" size={14} />
         </button>
 
         <button
@@ -271,7 +272,7 @@ export default function UserManagement() {
           style={btnStyle('#FEF2F2', '#FECACA', '#DC2626', rowBusy)}
           title="Delete user"
         >
-          🗑️
+          <AppIcon name="trash" size={14} />
         </button>
       </div>
     );
@@ -409,7 +410,7 @@ export default function UserManagement() {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="🔎  Search by name or email…"
+          placeholder="Search by name or email…"
           style={input}
         />
         <select value={fRole} onChange={(e) => setFRole(e.target.value)} style={input}>

@@ -34,6 +34,7 @@ import {
   selectSaveError,
 } from '../../features/admin/adminSessionsSlice';
 import { toLocalInput, fromLocalInput, minDateTime, isPastDateTime } from '../../utils/dateTime';
+import AppIcon from '../../components/shared/AppIcon';
 
 const SC = { scheduled: '#2f6f9b', live: '#e12e2a', completed: '#16a05f', cancelled: '#657691' };
 const STATUSES = ['scheduled', 'live', 'completed', 'cancelled'];
@@ -118,6 +119,7 @@ export default function AdminSessions() {
   const [fStatus, setFStatus] = useState('all');
   const [fTrainer, setFTrainer] = useState('');
   const [fBatch, setFBatch] = useState('');
+  const [traineeSearch, setTraineeSearch] = useState('');
 
   // ── Pagination ──
   const [page, setPage] = useState(1);
@@ -179,10 +181,11 @@ export default function AdminSessions() {
   const endIdx = Math.min(total, page * pageSize);
 
   // ── Modal helpers ──────────────────────────────────────────────────────────────
-  const openCreate = () => { setFormError(null); setModal({ mode: 'create', form: { ...EMPTY_FORM } }); };
+  const openCreate = () => { setFormError(null); setTraineeSearch(''); setModal({ mode: 'create', form: { ...EMPTY_FORM } }); };
   const openEdit = (s) => {
     if (s.status === 'completed') return;   // guard: completed is locked
     setFormError(null);
+    setTraineeSearch('');
     setModal({
       mode: 'edit',
       form: {
@@ -217,6 +220,7 @@ export default function AdminSessions() {
     if (!f.trainerId)    return setFormError('Please assign a trainer.');
     if (!f.batchId)      return setFormError('Please choose a batch.');
     if (!f.scheduledAt)  return setFormError('Please pick a date & time.');
+    if (!f.trainees || f.trainees.length === 0) return setFormError('At least 1 trainee should be selected');
 
     if (isPastDateTime(f.scheduledAt)) return setFormError('Session date and time cannot be in the past.');
 
@@ -285,14 +289,21 @@ export default function AdminSessions() {
     } finally { setBusyId(null); }
   };
 
-  // ── Trainees filtered to the chosen batch (convenience) ───────────────────────
+  // ── Trainees filtered to the chosen batch (convenience) + trainee search ──────
   const formTrainees = useMemo(() => {
     if (!modal) return [];
     const bId = modal.form.batchId;
-    if (!bId) return trainees;
-    const inBatch = trainees.filter((t) => (t.batchIds || []).map(String).includes(String(bId)));
-    return inBatch.length ? inBatch : trainees;
-  }, [modal, trainees]);
+    const base = !bId ? trainees : (() => {
+      const inBatch = trainees.filter((t) => (t.batchIds || []).map(String).includes(String(bId)));
+      return inBatch.length ? inBatch : trainees;
+    })();
+    const needle = traineeSearch.trim().toLowerCase();
+    if (!needle) return base;
+    return base.filter((t) =>
+      (t.name || '').toLowerCase().includes(needle) ||
+      (t.email || '').toLowerCase().includes(needle)
+    );
+  }, [modal, trainees, traineeSearch]);
 
   // ── Row action buttons (shared by table + cards) ──────────────────────────────
   const RowActions = ({ s }) => {
@@ -327,7 +338,7 @@ export default function AdminSessions() {
           style={btnStyle('#F8FAFC', '#E2E8F0', '#475569', editDisabled)}
           title={isCompleted ? 'Completed sessions are locked' : 'Edit session'}
         >
-          ✏️ {rowBusy && editDisabled ? '…' : ''}
+          <AppIcon name="edit" size={14} /> {rowBusy && editDisabled ? '…' : ''}
         </button>
 
         {/* Cancel */}
@@ -349,7 +360,7 @@ export default function AdminSessions() {
           style={btnStyle('#FEF2F2', '#FECACA', '#DC2626', deleteDisabled)}
           title={isCompleted ? 'Completed sessions are locked' : 'Delete session'}
         >
-          🗑️ {rowBusy && deleteDisabled ? '…' : ''}
+          <AppIcon name="trash" size={14} /> {rowBusy && deleteDisabled ? '…' : ''}
         </button>
       </div>
     );
@@ -403,7 +414,7 @@ export default function AdminSessions() {
 
       {/* Filter bar */}
       <div style={filterBar(isMobile)}>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔎  Search title, trainer or batch…" style={input} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title, trainer or batch…" style={input} />
         <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} style={input}>
           <option value="all">All statuses</option>
           {STATUSES.map((st) => <option key={st} value={st}>{formatSessionStatus(st)}</option>)}
@@ -547,6 +558,12 @@ export default function AdminSessions() {
 
                <Field label={`Trainees (${modal.form.trainees.length} selected — optional, batch members can also join)`}>
                  <div style={traineeBox}>
+                    <input
+                      style={{ ...input, marginBottom: 8 }}
+                      value={traineeSearch}
+                      onChange={(e) => setTraineeSearch(e.target.value)}
+                      placeholder="Search trainees by name…"
+                    />
                    {formTrainees.length > 0 && (
                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6, padding: '4px 6px' }}>
                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: '#334155', cursor: 'pointer' }}>

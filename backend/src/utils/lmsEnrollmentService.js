@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const User = require('../models/User');
 const Course = require('../models/Course');
 const CourseSubscription = require('../models/CourseSubscription');
-const { sendEmail, lmsEnrollmentTemplate } = require('./emailUtils');
+const { sendEmail, lmsEnrollmentTemplate, workshopApprovedTemplate } = require('./emailUtils');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
@@ -36,13 +36,26 @@ async function enrollLmsRegistration(reg, adminId) {
     throw Object.assign(new Error('Registration has no valid email — cannot enroll'), { statusCode: 400 });
   }
 
-  // Already-enrolled guard (prevents duplicates on refresh/repeat).
+  const emailFlagsSet =
+    reg.credentialEmailSent === true && reg.enrollmentEmailSent === true;
+
+  // Already-enrolled guard (prevents duplicates on refresh/repeat/retry).
   if (reg.traineeId) {
     const linked = await User.findById(reg.traineeId).select('_id name email role');
     if (linked) {
       return {
         user: linked, createdUser: false, subscription: null,
-        createdSubscription: false, email, emailSent: reg.enrollmentEmailSent === true,
+        createdSubscription: false, email, emailSent: emailFlagsSet,
+        emailError: null, skippedAsDuplicate: true,
+      };
+    }
+  }
+  if (emailFlagsSet) {
+    const linkedByFlag = await User.findOne({ email }).select('_id name email role');
+    if (linkedByFlag) {
+      return {
+        user: linkedByFlag, createdUser: false, subscription: null,
+        createdSubscription: false, email, emailSent: true,
         emailError: null, skippedAsDuplicate: true,
       };
     }
@@ -51,20 +64,25 @@ async function enrollLmsRegistration(reg, adminId) {
   if (existingUser) {
     return {
       user: existingUser, createdUser: false, subscription: null,
-      createdSubscription: false, email, emailSent: reg.enrollmentEmailSent === true,
+      createdSubscription: false, email, emailSent: emailFlagsSet,
       emailError: null, skippedAsDuplicate: true,
     };
   }
 
-  // Resolve selected LMS course (existing LMS course data source).
+  // Resolve selected LMS course — BEST EFFORT (legacy registrations may only
+  // carry `programInterest: 'YIEP'/'YBLP'`). A missing course must NOT block
+  // account creation or the two enrollment emails.
   let course = null;
   if (reg.courseId) {
     try { course = await Course.findById(reg.courseId); } catch { course = null; }
   }
   if (!course && reg.programInterest) {
-    course = await Course.findOne({ code: String(reg.programInterest).trim().toUpperCase() });
+    try {
+      course =
+        (await Course.findOne({ code: String(reg.programInterest).trim().toUpperCase() })) ||
+        (await Course.findOne({ name: new RegExp(`^${String(reg.programInterest).trim()}$`, 'i') }));
+    } catch { course = null; }
   }
-  if (!course) throw Object.assign(new Error('Selected LMS course is not available'), { statusCode: 400 });
 
   const internalPassword = generateTempPassword();
   let user;
@@ -84,7 +102,7 @@ async function enrollLmsRegistration(reg, adminId) {
       const raced = await User.findOne({ email }).select('_id name email role');
       return {
         user: raced, createdUser: false, subscription: null,
-        createdSubscription: false, email, emailSent: reg.enrollmentEmailSent === true,
+        createdSubscription: false, email, emailSent: emailFlagsSet,
         emailError: null, skippedAsDuplicate: true,
       };
     }
@@ -98,49 +116,70 @@ async function enrollLmsRegistration(reg, adminId) {
 
   let subscription = null;
   let createdSubscription = false;
-  try {
-    subscription = await CourseSubscription.findOne({ trainee: user._id, course: course._id });
-    if (!subscription) {
-      subscription = await CourseSubscription.create({
-        trainee: user._id,
-        course: course._id,
-        plan: 'admin',
-        status: 'active',
-        startDate: new Date(),
-        endDate: null,
-        payment: { amount: 0, currency: 'INR', gateway: 'manual', paidAt: new Date() },
-        activatedBy: adminId || null,
-        notes: `LMS enrollment from registration ${reg._id}`,
-      });
-      createdSubscription = true;
+  let subscriptionError = null;
+  if (course) {
+    try {
+      subscription = await CourseSubscription.findOne({ trainee: user._id, course: course._id });
+      if (!subscription) {
+        subscription = await CourseSubscription.create({
+          trainee: user._id,
+          course: course._id,
+          plan: 'admin',
+          status: 'active',
+          startDate: new Date(),
+          endDate: null,
+          payment: { amount: 0, currency: 'INR', gateway: 'manual', paidAt: new Date() },
+          activatedBy: adminId || null,
+          notes: `LMS enrollment from registration ${reg._id}`,
+        });
+        createdSubscription = true;
+      }
+    } catch (err) {
+      subscriptionError = err?.message || 'Failed to link course subscription';
+      console.error('LMS ENROLLMENT SUBSCRIPTION WARNING:', subscriptionError);
+      subscription = null;
     }
-  } catch (err) {
-    // Account created but course linking failed → roll back the new account so
-    // we never send a "success" email for a partial enrollment; admin retries.
-    await User.deleteOne({ _id: user._id }).catch(() => {});
-    throw Object.assign(
-      new Error(err?.message || 'Failed to enroll trainee in the selected course'),
-      { statusCode: err?.statusCode || 500 },
-    );
   }
 
-  return { user, createdUser: true, otp, subscription, createdSubscription, email, emailSent: false, emailError: null, course };
+  return { user, createdUser: true, otp, subscription, createdSubscription, subscriptionError, email, emailSent: false, emailError: null, course };
 }
 
-// Sends the enrollment credentials email to the trainee ONLY.
+// EMAIL 1 — Login Credential email (existing lmsEnrollmentTemplate design).
 // Never throws: email failure must not mark enrollment as failed.
-async function sendEnrollmentEmail({ reg, course, email, otp }) {
+async function sendLoginCredentialEmail({ reg, course, email, otp }) {
   const courseName = course?.name || reg.courseName || reg.programInterest || 'your LMS course';
   try {
     await sendEmail({
       to: email,
-      subject: `Younovate — Successfully Registered & Enrolled in ${courseName}: set your password with OTP`,
+      subject: `Welcome — Your Younovate Login Credentials for ${courseName}`,
       html: lmsEnrollmentTemplate(reg.fullName, courseName, email, otp, getLoginUrl()),
     });
     return { sent: true, error: null };
   } catch (err) {
-    console.error('LMS ENROLLMENT EMAIL ERROR:', err?.message || err);
-    return { sent: false, error: err?.message || 'Failed to send enrollment email' };
+    console.error('LMS LOGIN-CREDENTIAL EMAIL ERROR:', err?.message || err);
+    return { sent: false, error: err?.message || 'Failed to send login credential email' };
   }
 }
-module.exports = { enrollLmsRegistration, sendEnrollmentEmail, getLoginUrl };
+
+// EMAIL 2 — Enrollment Confirmation (EXISTING workshopApprovedTemplate design).
+// Never throws: email failure must not mark enrollment as failed.
+async function sendConfirmationEmail({ reg, course, email }) {
+  const courseName = course?.name || reg.courseName || reg.programInterest || 'your LMS course';
+  try {
+    await sendEmail({
+      to: email,
+      subject: `Younovate — Enrollment Confirmed: ${courseName}`,
+      html: workshopApprovedTemplate(reg.fullName, courseName, getLoginUrl()),
+    });
+    return { sent: true, error: null };
+  } catch (err) {
+    console.error('LMS CONFIRMATION EMAIL ERROR:', err?.message || err);
+    return { sent: false, error: err?.message || 'Failed to send enrollment confirmation email' };
+  }
+}
+
+// Back-compat alias (EMAIL 1) for existing callers.
+async function sendEnrollmentEmail(args) {
+  return sendLoginCredentialEmail(args);
+}
+module.exports = { enrollLmsRegistration, sendEnrollmentEmail, sendLoginCredentialEmail, sendConfirmationEmail, getLoginUrl };

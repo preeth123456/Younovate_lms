@@ -345,9 +345,111 @@ router.get('/registrations/:id', async (req, res) => {
 });
 
 // PATCH /api/admin/registrations/:id
+// One-way LMS status machine (backend-enforced — never trust frontend alone):
+//   `registered` → `enrolled` = run enrollment ONCE (account + EMAIL 1 + EMAIL 2)
+//   `enrolled` → anything else = REJECTED (409) — enrollment is irreversible
+//   anything else              = plain update, NO enrollment emails
+// Duplicate protection: enrollment runs only when (prevStatus === 'registered'
+// AND newStatus === 'enrolled') AND the service reports a fresh account.
+// Refresh / re-save / edit-while-enrolled never re-sends.
 router.patch('/registrations/:id', async (req, res) => {
-  const reg = await Registration.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
-  if (!reg) return res.status(404).json({ success: false, message: 'Registration not found' });
+  const ALLOWED_STATUSES = ['new', 'contacted', 'registered', 'enrolled', 'lead', 'pending', 'converted', 'rejected'];
+  const body = req.body || {};
+
+  const existing = await Registration.findById(req.params.id);
+  if (!existing) return res.status(404).json({ success: false, message: 'Registration not found' });
+  const prevStatus = String(existing.status || '').toLowerCase();
+
+  // 1) Validate requested status BEFORE touching MongoDB (enum stays active).
+  let nextStatus = null;
+  if (body.status !== undefined) {
+    nextStatus = String(body.status || '').trim().toLowerCase();
+    if (!ALLOWED_STATUSES.includes(nextStatus)) {
+      return res.status(400).json({ success: false, message: `Invalid status. Allowed: ${ALLOWED_STATUSES.join(', ')}` });
+    }
+    // One-way guard: an enrolled registration can never move back.
+    if (prevStatus === 'enrolled' && nextStatus !== 'enrolled') {
+      return res.status(409).json({ success: false, message: 'An enrolled registration cannot be moved back to another status.' });
+    }
+  }
+  const isRegisteredToEnrolled = prevStatus === 'registered' && nextStatus === 'enrolled';
+
+  // 2) Apply non-enrollment fields (whitelisted — trainee linkage + email
+  // flags are server-managed and can never be set from the client).
+  // `status` itself is set below so the transition decision (prev vs next)
+  // cannot be clobbered by $set ordering.
+  const ALLOWED_FIELDS = ['fullName', 'firstName', 'secondName', 'email', 'phone', 'programInterest', 'courseId', 'courseName', 'source', 'notes'];
+  for (const key of ALLOWED_FIELDS) {
+    if (body[key] !== undefined) existing[key] = body[key];
+  }
+  if (typeof existing.email === 'string') existing.email = existing.email.trim().toLowerCase();
+  if (nextStatus) existing.status = nextStatus;
+
+  let enrollment = null;
+
+  // 3) Registered → Enrolled ONLY → create/activate trainee + send BOTH emails.
+  if (isRegisteredToEnrolled) {
+    const {
+      enrollLmsRegistration,
+      sendLoginCredentialEmail,
+      sendConfirmationEmail,
+    } = require('../utils/lmsEnrollmentService');
+
+    let result;
+    try {
+      result = await enrollLmsRegistration(existing, req.user?._id);
+    } catch (err) {
+      const code = err?.statusCode || 500;
+      return res.status(code).json({ success: false, message: err?.message || 'Enrollment failed' });
+    }
+
+    if (result.skippedAsDuplicate) {
+      // Trainee already has an account / was already enrolled:
+      // persist status + link, but send NOTHING.
+      if (result.user?._id && !existing.traineeId) existing.traineeId = result.user._id;
+      if (existing.status !== 'enrolled') existing.status = 'enrolled';
+      if (!existing.convertedAt) existing.convertedAt = new Date();
+      if (!existing.convertedBy && req.user?._id) existing.convertedBy = req.user._id;
+      await existing.save();
+      enrollment = {
+        alreadyEnrolled: true,
+        emailSent: result.emailSent === true,
+        emailError: null,
+        traineeId: existing.traineeId || result.user?._id || null,
+      };
+    } else {
+      // Fresh account → EMAIL 1 (login credentials) + EMAIL 2 (confirmation).
+      const loginRes = await sendLoginCredentialEmail({
+        reg: existing, course: result.course, email: result.email, otp: result.otp,
+      });
+      const confirmRes = await sendConfirmationEmail({
+        reg: existing, course: result.course, email: result.email,
+      });
+      if (result.user?._id) existing.traineeId = result.user._id;
+      existing.status = 'enrolled';
+      existing.convertedAt = new Date();
+      if (req.user?._id) existing.convertedBy = req.user._id;
+      // Flags are set ONLY when the provider accepted that exact email, so a
+      // later retry after a failure still sends.
+      if (loginRes.sent) existing.credentialEmailSent = true;
+      if (confirmRes.sent) existing.enrollmentEmailSent = true;
+      await existing.save();
+      const emailError = [loginRes.error, confirmRes.error].filter(Boolean).join('; ') || null;
+      enrollment = {
+        alreadyEnrolled: false,
+        emailSent: loginRes.sent && confirmRes.sent,
+        loginEmailSent: loginRes.sent,
+        confirmationEmailSent: confirmRes.sent,
+        emailError,
+        traineeId: existing.traineeId || null,
+      };
+    }
+  } else {
+    // 4) Non-enrolled update (incl. re-saving an already-enrolled record):
+    // plain save, NO enrollment emails ever.
+    await existing.save();
+  }
+  const reg = existing;
   // Status-change inbox (best-effort): enrolled trainee + admins monitoring.
   try {
     const { notifyUsers, notifyAdmins, idOf } = require('../utils/notificationService');
@@ -371,7 +473,7 @@ router.patch('/registrations/:id', async (req, res) => {
       meta: { registrationId: idOf(reg._id), entityType: 'registration' },
     });
   } catch (_) {}
-  return res.json({ success: true, data: reg });
+  return res.json({ success: true, data: reg, enrollment });
 });
 
 // POST /api/admin/registrations/:id/convert — lead → trainee User account

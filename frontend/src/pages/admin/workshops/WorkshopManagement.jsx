@@ -20,6 +20,7 @@ import {
   formatDateTime,
 } from './workshopMockData';
 import { isPastDateTime, todayDateInput, nowTimeInput } from '../../../utils/dateTime';
+import AppIcon from '../../../components/shared/AppIcon';
 
 const S = {
   page:    { padding: '20px 28px', fontFamily: 'Public Sans, system-ui, sans-serif', background: '#F1F5F9', minHeight: '100vh' },
@@ -430,7 +431,7 @@ export default function WorkshopManagement() {
 
       <div style={{ marginBottom: 16 }}>
         <div style={{ position: 'relative', maxWidth: 400 }}>
-          <i className="ti ti-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', fontSize: 14 }} />
+          <AppIcon name="search" size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }} />
           <input style={{ ...S.input, paddingLeft: 32 }} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search workshop or trainer…" />
         </div>
       </div>

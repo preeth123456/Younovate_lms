@@ -5,6 +5,7 @@ import WorkshopSearch from './_components/WorkshopSearch';
 import WorkshopFilterSelect from './_components/WorkshopFilterSelect';
 import WorkshopStatusBadge from './_components/WorkshopStatusBadge';
 import { btnGhost, input, tableCard, th, td, emptyCell } from './_components/workshopDesignTokens';
+import AppIcon from '../../../components/shared/AppIcon';
 
 function makeISO(d) {
   const dt = new Date(d);
@@ -143,16 +144,16 @@ export default function WorkshopManagementDrafts() {
                     <td style={{ ...td, textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                         <button type="button" style={iconBtn()} onClick={() => onAction(w.id, 'edit')}>
-                          ✏️ Edit
+                          <AppIcon name="edit" size={13} style={{ marginRight: 6, verticalAlign: '-2px' }} />Edit
                         </button>
                         <button type="button" style={iconBtn()} onClick={() => onAction(w.id, 'preview')}>
-                          👁️ Preview
+                          <AppIcon name="eye" size={13} style={{ marginRight: 6, verticalAlign: '-2px' }} />Preview
                         </button>
                         <button type="button" style={iconBtn('#ECFDF5', '#10B981', '#059669')} onClick={() => onAction(w.id, 'publish')}>
                           🚀 Publish
                         </button>
                         <button type="button" style={iconBtn('#FEF2F2', '#DC2626', '#DC2626', true)} onClick={() => onAction(w.id, 'delete')}>
-                          🗑️ Delete
+                          <AppIcon name="trash" size={13} style={{ marginRight: 6, verticalAlign: '-2px' }} />Delete
                         </button>
                       </div>
                     </td>

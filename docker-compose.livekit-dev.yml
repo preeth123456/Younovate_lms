@@ -29,6 +29,7 @@ services:
     # Run as root so MP4s written to the bind mount are visible on Windows hosts.
     user: "0:0"
     restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "exec /tini -- egress --config /etc/egress.yaml"]
     volumes:
       - ./lms-recordings:/out
       - ./egress.yaml:/etc/egress.yaml

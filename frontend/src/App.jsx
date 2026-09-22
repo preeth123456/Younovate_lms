@@ -38,6 +38,7 @@ import AdminLmsAttendance from './pages/admin/LmsAttendance';
 import AdminRecordings   from './pages/admin/Recordings';
 import AdminRecordingPlayback from './pages/admin/RecordingPlayback';
 import AdminFeedback from './pages/admin/Feedback';
+import AdminLmsCertificates from './pages/admin/LmsCertificates';
 import AdminLmsContent   from './pages/admin/LmsContent';
 import AdminAssignments  from './pages/admin/Assignments';
 import AdminModuleAssessments from './pages/admin/ModuleAssessments';
@@ -85,6 +86,7 @@ import TrainerAttendance from './pages/trainer/Attendance';
 import TrainerRecordings from './pages/trainer/Recordings';
 import TrainerRecordingPlayback from './pages/trainer/RecordingPlayback';
 import TrainerFeedback from './pages/trainer/Feedback';
+import TrainerLmsCertificates from './pages/trainer/LmsCertificates';
 import TrainerAssignments from './pages/trainer/Assignments';
 import TrainerModuleAssessments from './pages/trainer/ModuleAssessments';
 import TrainerSettings from './pages/trainer/Settings';
@@ -110,6 +112,7 @@ import TraineeCourses from './pages/trainee/Trainee_Courses';
 import TraineeCourseDetail from './pages/trainee/Trainee_CourseDetail';
 import TraineeWorkshopFeedback from './pages/trainee/WorkshopFeedback';
 import TraineeProgress from './pages/trainee/Progress';
+import TraineeLmsCertificates from './pages/trainee/LmsCertificates';
 import TraineeCertificates from './pages/trainee/TraineeCertificates';
 import GlobalSearch from './pages/shared/GlobalSearch';
 
@@ -208,6 +211,7 @@ function App() {
             <Route path="recordings"    element={<AdminRecordings />} />
             <Route path="recordings/:id" element={<AdminRecordingPlayback />} />
             <Route path="feedback" element={<AdminFeedback />} />
+            <Route path="certificates" element={<AdminLmsCertificates />} />
             <Route path="lms"           element={<AdminLmsContent />} />
             <Route path="assignments"  element={<AdminAssignments />} />
             <Route path="module-assessments" element={<AdminModuleAssessments />} />
@@ -242,6 +246,7 @@ function App() {
             <Route path="recordings"  element={<TrainerRecordings />} />
             <Route path="recordings/:id" element={<TrainerRecordingPlayback />} />
             <Route path="feedback" element={<TrainerFeedback />} />
+            <Route path="certificates" element={<TrainerLmsCertificates />} />
             <Route path="assignments" element={<TrainerAssignments />} />
             <Route path="module-assessments" element={<TrainerModuleAssessments />} />
             <Route path="settings"     element={<TrainerSettings />} />
@@ -273,6 +278,7 @@ function App() {
           <Route path="module-assessments" element={<TraineeModuleAssessments />} />
           <Route path="feedback" element={<TraineeWorkshopFeedback />} />
           <Route path="progress"  element={<TraineeProgress />} />
+          <Route path="lms-certificates" element={<TraineeLmsCertificates />} />
           <Route path="certificates" element={<TraineeCertificates />} />
           <Route path="settings"    element={<TraineeSettings />} />
           <Route path="profile" element={<Profile />} />

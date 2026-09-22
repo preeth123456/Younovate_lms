@@ -18,6 +18,7 @@ import {
 
 import { todayDateInput, nowTimeInput, isPastDateTime } from '../../utils/dateTime';
 import WatchRecordingButton from '../../components/recording/WatchRecordingButton';
+import AppIcon from '../../components/shared/AppIcon';
 
 // Attendance comes through the EXISTING trainer slice (same thunk/selectors the
 // Trainer → Attendance page uses). No new slice, no store wiring, no extra API.
@@ -413,12 +414,12 @@ const SessionDetail = ({ mode = 'view' }) => {
               <button onClick={() => !locked && navigate('edit', { relative: 'path' })} disabled={locked} className="sd-btn"
                 title={locked ? 'Completed sessions cannot be edited' : 'Edit session'}
                 style={{ padding: '10px 18px', borderRadius: 9, border: 'none', background: locked ? '#94a3b8' : '#1e293b', color: '#fff', fontWeight: 700, fontSize: '0.85rem', cursor: locked ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
-                ✏️ Edit
+                <AppIcon name="edit" size={14} style={{ marginRight: 6, verticalAlign: '-2px' }} />Edit
               </button>
               <button onClick={handleDelete} disabled={busy || locked} className="sd-btn"
                 title={locked ? 'Completed sessions cannot be deleted' : 'Delete session'}
                 style={{ padding: '10px 18px', borderRadius: 9, border: '1px solid #fecaca', background: '#fff', color: (busy || locked) ? '#cbd5e1' : '#dc2626', fontWeight: 700, fontSize: '0.85rem', cursor: (busy || locked) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', borderColor: locked ? '#e5e7eb' : '#fecaca' }}>
-                {busy ? 'Deleting…' : '🗑 Delete'}
+                {busy ? 'Deleting…' : <><AppIcon name="trash" size={14} style={{ marginRight: 6, verticalAlign: '-2px' }} />Delete</>}
               </button>
               {locked && (
                 <span style={{ fontSize: '0.74rem', color: '#94a3b8', fontWeight: 600 }}>

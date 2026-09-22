@@ -331,7 +331,7 @@ export default function Trainees() {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="🔎  Search by name or email…"
+          placeholder="Search by name or email…"
           style={input}
         />
         <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} style={input}>

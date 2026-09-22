@@ -11,6 +11,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
+import AppIcon from '../../components/shared/AppIcon';
 
 import {
   fetchTrainerSessions,
@@ -380,8 +381,11 @@ const TrainerAttendance = () => {
           {selectedSessionId && (
             <div style={{ flex: '1 1 240px', minWidth: 0 }}>
               <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: '#64748b', marginBottom: 6 }}>Search trainee</label>
-              <input className="at-search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Name or email…"
-                style={{ width: '100%', border: '1.5px solid #e2e8f0', borderRadius: 10, padding: '11px 13px', fontSize: '0.85rem', color: '#0f172a', background: '#fff', fontFamily: 'inherit' }} />
+              <div style={{ position: 'relative' }}>
+                <AppIcon name="search" size={14} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }} />
+                <input className="at-search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Name or email…"
+                  style={{ width: '100%', border: '1.5px solid #e2e8f0', borderRadius: 10, padding: '11px 13px 11px 34px', fontSize: '0.85rem', color: '#0f172a', background: '#fff', fontFamily: 'inherit' }} />
+              </div>
             </div>
           )}
         </div>
@@ -421,7 +425,11 @@ const TrainerAttendance = () => {
 
             {tableLoading ? <Spinner /> : sessionStudents.length === 0 ? (
               <div style={{ padding: '48px 20px', textAlign: 'center', color: '#94a3b8' }}>
-                <div style={{ fontSize: '2rem', marginBottom: 10 }}>🔍</div>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
+                  <span style={{ width: 52, height: 52, borderRadius: 14, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <AppIcon name="search" size={22} style={{ color: '#64748B' }} />
+                  </span>
+                </div>
                 <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>
                   {query ? 'No trainees match your search.' : "No students found for this session's batch."}
                 </div>

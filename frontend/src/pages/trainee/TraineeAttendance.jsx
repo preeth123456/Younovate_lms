@@ -13,21 +13,36 @@ const STATUS_CFG = {
 };
 
 export default function TraineeAttendance() {
-  const [records, setRecords] = useState([]);
+  const [lmsRecords, setLmsRecords] = useState([]);
+  const [wsRecords, setWsRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [tab, setTab] = useState('lms');
 
   const fetchRecords = async () => {
     setLoading(true);
     setError(null);
     try {
       const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-      const { data } = await axios.get(`${API}/api/trainee/attendance`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setRecords(data.records || []);
+      const cfg = { headers: { Authorization: `Bearer ${token}` } };
+      // LMS (unchanged) + Workshop (existing records, same API as Dashboard) in parallel
+      const [lmsRes, wsRes] = await Promise.all([
+        axios.get(`${API}/api/trainee/attendance`, cfg),
+        axios.get(`${API}/api/trainee/workshop-attendance`, cfg),
+      ]);
+      setLmsRecords(lmsRes.data.records || []);
+      // Normalize Workshop records to the LMS table shape (display-only, no new system)
+      const normalized = (wsRes.data.records || []).map((r) => ({
+        _id: r._id,
+        session: { title: r.sessionId?.title || r.workshopId?.title || 'Workshop Session' },
+        joinedAt: r.joinTime || null,
+        leftAt: r.leaveTime || null,
+        attendedSeconds: r.duration ? Math.round(Number(r.duration) * 60) : 0,
+        status: String(r.attendanceStatus || 'absent').toLowerCase(),
+      }));
+      setWsRecords(normalized);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load attendance');
     } finally {
@@ -36,6 +51,8 @@ export default function TraineeAttendance() {
   };
 
   useEffect(() => { fetchRecords(); }, []);
+
+  const records = tab === 'lms' ? lmsRecords : wsRecords;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -59,7 +76,23 @@ export default function TraineeAttendance() {
     <div style={{ padding: '20px 28px', fontFamily: 'Public Sans, system-ui, sans-serif', background: '#F1F5F9', minHeight: '100vh' }}>
       <div style={{ marginBottom: 20 }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#0F172A' }}>My Attendance</h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748B' }}>Your LMS session attendance history.</p>
+        <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748B' }}>{tab === 'lms' ? 'Your LMS session attendance history.' : 'Your Workshop session attendance history.'}</p>
+      </div>
+
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 12, padding: 4, width: 'fit-content' }}>
+        {[
+          { key: 'lms', label: `LMS Attendance${lmsRecords.length > 0 ? ` (${lmsRecords.length})` : ''}` },
+          { key: 'workshop', label: `Workshop Attendance${wsRecords.length > 0 ? ` (${wsRecords.length})` : ''}` },
+        ].map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)} style={{
+            padding: '8px 16px', borderRadius: 9, border: 'none', cursor: 'pointer',
+            fontSize: 13, fontWeight: 700, fontFamily: 'inherit',
+            background: tab === t.key ? '#1E3A5F' : 'transparent',
+            color: tab === t.key ? '#fff' : '#64748B',
+          }}>
+            {t.label}
+          </button>
+        ))}
       </div>
 
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>

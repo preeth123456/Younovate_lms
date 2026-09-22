@@ -7,6 +7,7 @@ import {
   WORKSHOP_CATEGORIES,
   WORKSHOP_BILLING,
 } from './workshopMockData';
+import AppIcon from '../../../components/shared/AppIcon';
 
 function IconBtn({ title, children, onClick, danger = false, disabled = false }) {
   return (
@@ -223,9 +224,9 @@ export default function AllWorkshops() {
                     </td>
                     <td style={{ ...td, textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
-                        <IconBtn title="View" onClick={() => onAction(w.id, 'view')} disabled={busyId === w.id}>👁️</IconBtn>
-                        <IconBtn title="Edit" onClick={() => onAction(w.id, 'edit')} disabled={busyId === w.id}>✏️</IconBtn>
-                        <IconBtn title="Delete" onClick={() => onAction(w.id, 'delete')} disabled={busyId === w.id} danger>🗑️</IconBtn>
+                        <IconBtn title="View" onClick={() => onAction(w.id, 'view')} disabled={busyId === w.id}><AppIcon name="eye" size={14} /></IconBtn>
+                        <IconBtn title="Edit" onClick={() => onAction(w.id, 'edit')} disabled={busyId === w.id}><AppIcon name="edit" size={14} /></IconBtn>
+                        <IconBtn title="Delete" onClick={() => onAction(w.id, 'delete')} disabled={busyId === w.id} danger><AppIcon name="trash" size={14} /></IconBtn>
                         <IconBtn title="Clone" onClick={() => onAction(w.id, 'clone')} disabled={busyId === w.id}>⧉</IconBtn>
                         <IconBtn title="Publish" onClick={() => onAction(w.id, 'publish')} disabled={busyId === w.id}>🚀</IconBtn>
                       </div>

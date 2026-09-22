@@ -225,24 +225,51 @@ const changePassword = async (req, res) => {
 /* ── FORGOT PASSWORD ─────────────────────────────────────────────────────────
    POST /api/auth/forgot-password
    Body: { email }
-   Response: { success, message }  — always 200 (anti-enumeration)
+   Eligibility (backend-enforced): ONLY active Trainer OR Enrolled Trainee.
+   Enrolled trainee = Registration with status `enrolled` linked to the User
+   (via traineeId) OR a User with the same email in an `enrolled` Registration.
+   Ineligible / unknown emails get an explicit 404 using the EXISTING
+   'Invalid or expired OTP' message style — NO OTP/token/record is created
+   and NO email is sent, so the flow cannot continue to reset-password.
 ──────────────────────────────────────────────────────────────────────────── */
 const forgotPassword = async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ success: false, message: 'email is required' });
 
-  const ok = () => res.json({ success: true, message: 'If that email is registered, an OTP has been sent' });
-
   const user = await User.findOne({ email: email.toLowerCase(), isActive: true })
     .select('+passwordResetToken +passwordResetExpires +passwordResetAttempts');
-  if (!user) return ok(); // silent — don't reveal existence
+  if (!user) return res.status(404).json({ success: false, message: 'No account found with this email' });
+
+  if (!(await isForgotPasswordEligible(user)))
+    return res.status(403).json({ success: false, message: 'Forgot password is available only for enrolled trainees and trainers' });
 
   const otp = await user.createPasswordResetOtp();
   await user.save();
 
   await sendEmail({ to: user.email, subject: 'Younovate — Your password reset code', html: otpTemplate(user.name, otp) });
-  return ok();
+  return res.json({ success: true, message: 'If that email is registered, an OTP has been sent' });
 };
+
+// Eligibility gate shared by forgot/verify/reset: active Trainer, or Trainee
+// backed by an `enrolled` Registration. Never throws — fail closed (false).
+async function isForgotPasswordEligible(user) {
+  try {
+    if (!user || user.isActive !== true) return false;
+    if (user.role === 'trainer') return true;
+    if (user.role !== 'trainee') return false;
+    const Registration = require('../models/Registration');
+    const email = String(user.email || '').toLowerCase();
+    const enrolled = await Registration.findOne({
+      $and: [
+        { status: 'enrolled' },
+        { $or: [{ traineeId: user._id }, ...(email ? [{ email }] : [])] },
+      ],
+    }).select('_id').lean();
+    return Boolean(enrolled);
+  } catch {
+    return false;
+  }
+}
 
 /* ── VERIFY OTP ──────────────────────────────────────────────────────────────
    POST /api/auth/verify-otp
@@ -256,6 +283,7 @@ const verifyOtp = async (req, res) => {
   const user = await User.findOne({ email: email.toLowerCase() })
     .select('+passwordResetToken +passwordResetExpires +passwordResetAttempts');
   if (!user) return res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
+  if (!(await isForgotPasswordEligible(user))) return res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
 
   const result = await user.verifyPasswordResetOtp(otp);
   await user.save();
@@ -285,6 +313,7 @@ const resetPassword = async (req, res) => {
   const user = await User.findOne({ email: email.toLowerCase() })
     .select('+password +passwordResetToken +passwordResetExpires +passwordResetAttempts +sessionToken');
   if (!user) return res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
+  if (!(await isForgotPasswordEligible(user))) return res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
 
   const result = await user.verifyPasswordResetOtp(otp);
   if (result !== 'valid') {

@@ -19,6 +19,7 @@ const NAV = [
     label: 'Progress',
     items: [
       { to: '/trainee/progress',      icon: 'chart-line',       label: 'My Progress' },
+      { to: '/trainee/lms-certificates', icon: 'certificate',   label: 'LMS Certificates' },
       { to: '/trainee/certificates',  icon: 'certificate',      label: 'Certificates' },
     ],
   },

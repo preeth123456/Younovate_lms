@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
+import AppIcon from '../../components/shared/AppIcon';
 import {
   fetchDashboard,
   selectAdminDashboard,
@@ -223,7 +224,7 @@ const Dashboard = () => {
           title="TOTAL TRAINEES"
           value={totalTrainees}
           subtitle={totalTrainees > 0 ? `↑ ${Math.floor(totalTrainees * 0.04)} this month` : 'No data'}
-          icon="👥"
+          icon={<AppIcon name="users" size={19} style={{ color: '#3B82F6' }} />}
           color="#3B82F6"
           accentBg="#EFF6FF"
         />
@@ -231,7 +232,7 @@ const Dashboard = () => {
           title="ACTIVE BATCHES"
           value={activeBatches || totalBatches}
           subtitle={`Total: ${totalBatches}`}
-          icon="🏠"
+          icon={<AppIcon name="layers" size={19} style={{ color: '#22C55E' }} />}
           color="#22C55E"
           accentBg="#F0FDF4"
         />
@@ -255,7 +256,7 @@ const Dashboard = () => {
           title="ATTENDANCE RISK"
           value={attendanceRisk}
           subtitle="Below 80%"
-          icon="⚠️"
+          icon={<AppIcon name="alert-triangle" size={19} style={{ color: '#F59E0B' }} />}
           color="#F59E0B"
           accentBg="#FFFBEB"
         />
@@ -271,7 +272,7 @@ const Dashboard = () => {
           title="BRANCH READY"
           value={branchReady}
           subtitle="YBLP verdict"
-          icon="🎯"
+          icon={<AppIcon name="target" size={19} style={{ color: '#06B6D4' }} />}
           color="#06B6D4"
           accentBg="#ECFEFF"
         />

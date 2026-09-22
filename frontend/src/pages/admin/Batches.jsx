@@ -9,6 +9,8 @@ import {
   selectBatchUpdateStatus, selectBatchUpdateError,
   selectBatchDeleteStatus, selectBatchDeleteError,
   resetBatchCreateStatus, clearBatchErrors,
+  assignTraineesToBatch,
+  selectAssignStatus,
 } from '../../features/session/batchSlice';
 
 import {
@@ -18,11 +20,14 @@ import {
 
 import {
   fetchTrainers,
+  fetchAdminTrainees,
   selectAdminTrainers,
+  selectAllAdminTrainees,
 } from '../../features/admin/adminSlice';
 
 import { selectUserRole } from '../../features/auth/authSlice';
 import { isPastDateOnly } from '../../utils/dateTime';
+import AppIcon from '../../components/shared/AppIcon';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -53,6 +58,7 @@ const CARD_ACCENTS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8
 const EMPTY_FORM = {
   name: '', description: '', trainerId: '',
   startDate: '', maxStudents: 25, course: '', status: 'upcoming',
+  traineeIds: [],
 };
 
 const ROWS_OPTIONS = [5, 10, 20, 50];
@@ -192,12 +198,13 @@ const Modal = ({ onClose, children }) => {
 // BATCH FORM MODAL
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const BatchFormModal = ({ editBatch, trainers, courses, onClose, pushToast }) => {
+const BatchFormModal = ({ editBatch, trainers, courses, trainees, onClose, pushToast }) => {
   const dispatch = useDispatch();
   const createStatus = useSelector(selectBatchCreateStatus);
   const createError = useSelector(selectBatchCreateError);
   const updateStatus = useSelector(selectBatchUpdateStatus);
   const updateError = useSelector(selectBatchUpdateError);
+  const assignStatus = useSelector(selectAssignStatus);
 
   const isEdit = !!editBatch;
   const [formError, setFormError] = useState(null);
@@ -211,6 +218,7 @@ const BatchFormModal = ({ editBatch, trainers, courses, onClose, pushToast }) =>
           maxStudents: editBatch.maxStudents || 25,
           course: editBatch.course || '',
           status: editBatch.status || 'upcoming',
+          traineeIds: editBatch.traineeIds?.map(String) || [],
         }
       : { ...EMPTY_FORM }
   );
@@ -221,12 +229,39 @@ const BatchFormModal = ({ editBatch, trainers, courses, onClose, pushToast }) =>
     }
   }, [courses]);
 
-  const saving = createStatus === 'loading' || updateStatus === 'loading';
+  const saving = createStatus === 'loading' || updateStatus === 'loading' || assignStatus === 'loading';
   const err = createError || updateError;
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
+  const handleTraineeChange = (newTraineeIds) => {
+    set('traineeIds', newTraineeIds);
+    if (newTraineeIds.length > 0) {
+      setFormError(null);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    // Clear previous error when user starts fixing
+    setFormError(null);
+
+    // Validate required fields for new batch
+    if (!isEdit) {
+      if (!form.name || !form.name.trim()) {
+        return setFormError('⚠️ Batch Name is required.');
+      }
+      if (!form.trainerId) {
+        return setFormError('⚠️ Assign Trainer is required.');
+      }
+      if (!form.startDate) {
+        return setFormError('⚠️ Start Date is required.');
+      }
+      if (!form.traineeIds || form.traineeIds.length === 0) {
+        return setFormError('⚠️ At least 1 trainee should be selected.');
+      }
+    }
+
     if (form.startDate) {
       if (isPastDateOnly(form.startDate)) return setFormError('Batch start date cannot be in the past.');
     }
@@ -236,11 +271,24 @@ const BatchFormModal = ({ editBatch, trainers, courses, onClose, pushToast }) =>
       startDate: form.startDate || undefined,
       trainerId: form.trainerId || undefined,
     };
+    const { traineeIds, ...batchPayload } = payload;
+
     const result = isEdit
-      ? await dispatch(updateBatch({ id: editBatch._id, ...payload }))
-      : await dispatch(createBatch(payload));
+      ? await dispatch(updateBatch({ id: editBatch._id, ...batchPayload }))
+      : await dispatch(createBatch(batchPayload));
     const action = isEdit ? updateBatch : createBatch;
     if (action.fulfilled.match(result)) {
+      const createdBatch = result.payload?.data || result.payload;
+      const batchId = createdBatch?._id;
+
+      // If creating new batch and trainees selected, assign them
+      if (!isEdit && batchId && traineeIds && traineeIds.length > 0) {
+        const assignResult = await dispatch(assignTraineesToBatch({ batchId, traineeIds }));
+        if (!assignTraineesToBatch.fulfilled.match(assignResult)) {
+          pushToast('warning', 'Batch created but failed to assign trainees');
+        }
+      }
+
       pushToast('success', isEdit ? 'Batch updated!' : 'Batch created!');
       dispatch(resetBatchCreateStatus());
       dispatch(fetchBatches());
@@ -284,6 +332,42 @@ const BatchFormModal = ({ editBatch, trainers, courses, onClose, pushToast }) =>
             </option>
           ))}
         </FSelect>
+
+        {/* Trainee Selection (required for new batch) */}
+        {!isEdit && trainees.length > 0 && (
+          <Field label={`Select Trainees (${form.traineeIds.length} selected) — required`}>
+            <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid #dbe3ed', borderRadius: 8, padding: 8, background: '#fbfcfe' }}>
+              {form.traineeIds.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6, padding: '4px 6px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: '#334155', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={form.traineeIds.length === trainees.length}
+                      onChange={() => {
+                        if (form.traineeIds.length === trainees.length) {
+                          handleTraineeChange([]);
+                        } else {
+                          handleTraineeChange(trainees.map((t) => String(t._id)));
+                        }
+                      }}
+                    />
+                    {form.traineeIds.length === trainees.length ? 'Deselect All' : 'Select All'}
+                  </label>
+                </div>
+              )}
+              {trainees.map((t) => {
+                const id = String(t._id);
+                const checked = form.traineeIds.includes(id);
+                return (
+                  <label key={id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '4px 6px', borderRadius: 6, cursor: 'pointer', background: checked ? '#eaf3fb' : 'transparent' }}>
+                    <input type="checkbox" checked={checked} onChange={() => handleTraineeChange(checked ? form.traineeIds.filter((x) => x !== id) : [...form.traineeIds, id])} />
+                    <span>{t.name}{t.email ? <span style={{ color: '#657691', marginLeft: 6 }}>({t.email})</span> : null}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </Field>
+        )}
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
            <FInput label="Start Date" type="date" value={form.startDate} onChange={(e) => { setFormError(null); set('startDate', e.target.value); }} min={new Date().toISOString().split('T')[0]} />
@@ -369,6 +453,7 @@ const Batches = () => {
 
   const courses = useSelector(selectAllCourses) ?? [];
   const trainers = useSelector(selectAdminTrainers) ?? [];
+  const trainees = useSelector(selectAllAdminTrainees) ?? [];
 
   // ── Filters ──
   const [search, setSearch] = useState('');
@@ -395,6 +480,7 @@ const Batches = () => {
   useEffect(() => {
     dispatch(fetchBatches());
     dispatch(fetchCourses());
+    dispatch(fetchAdminTrainees());
     if (isAdmin) dispatch(fetchTrainers());
   }, [dispatch, isAdmin]);
 
@@ -584,7 +670,7 @@ const Batches = () => {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="🔎  Search name, course, trainer…"
+            placeholder="Search name, course, trainer…"
             className="fi"
             style={{ ...input, flex: 1, minWidth: 200 }}
           />
@@ -726,15 +812,15 @@ const Batches = () => {
                         <td style={td}>
                           <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end' }}>
                             <button className="icon-btn view-btn" title="View" onClick={() => openView(b)} style={iconBtn}>
-                              👁️
+                              <AppIcon name="eye" size={14} />
                             </button>
                             {isAdmin && (
                               <>
                                 <button className="icon-btn" title="Edit" onClick={() => openEdit(b)} style={iconBtn}>
-                                  ✏️
+                                  <AppIcon name="edit" size={14} />
                                 </button>
                                 <button className="icon-btn del-btn" title="Delete" onClick={() => openDelete(b)} style={iconBtn}>
-                                  🗑️
+                                  <AppIcon name="trash" size={14} />
                                 </button>
                               </>
                             )}
@@ -797,7 +883,7 @@ const Batches = () => {
 
       {/* ── MODALS ── */}
       {(modal === 'add' || modal === 'edit') && (
-        <BatchFormModal editBatch={modal === 'edit' ? target : null} trainers={trainers} courses={courses} onClose={closeModal} pushToast={pushToast} />
+        <BatchFormModal editBatch={modal === 'edit' ? target : null} trainers={trainers} courses={courses} trainees={trainees} onClose={closeModal} pushToast={pushToast} />
       )}
 
       {modal === 'delete' && target && <DeleteModal batch={target} deleting={deleteStatus === 'loading'} onConfirm={handleDelete} onClose={closeModal} />}
@@ -819,6 +905,17 @@ const Batches = () => {
     </div>
   );
 };
+
+function Field({ label, children }) {
+  return (
+    <label style={{ display: 'block' }}>
+      <span style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#657691', marginBottom: 6 }}>
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
 
 export default Batches;
 

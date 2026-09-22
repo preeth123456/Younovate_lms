@@ -12,6 +12,7 @@ import {
   clearError,
 } from '../features/auth/authSlice';
 import toast from 'react-hot-toast';
+import AppIcon from '../components/shared/AppIcon';
 
 const ROLE_REDIRECT = {
   admin:   '/admin/dashboard',
@@ -110,7 +111,7 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} noValidate>
 
             <div className={`yn-field${errors.email ? ' yn-field-error' : ''}`}>
-              <label htmlFor="email" className="yn-label">Email address</label>
+              <label htmlFor="email" className="yn-label">Email ID</label>
               <div className="yn-input-wrap">
                 <i className="ti ti-mail yn-icon" aria-hidden="true" />
                 <input
@@ -137,7 +138,7 @@ export default function LoginPage() {
                 <button type="button" className="yn-eye"
                   onClick={() => setShowPw(v => !v)}
                   aria-label={showPw ? 'Hide password' : 'Show password'}>
-                  <i className={`ti ${showPw ? 'ti-eye-off' : 'ti-eye'}`} aria-hidden="true" />
+                  <AppIcon name={showPw ? 'eye-off' : 'eye'} size={16} aria-hidden="true" />
                 </button>
               </div>
               {errors.password && <p className="yn-err"><i className="ti ti-alert-circle" />{errors.password}</p>}

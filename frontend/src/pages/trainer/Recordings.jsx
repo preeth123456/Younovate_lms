@@ -4,6 +4,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import axios from 'axios';
 import { API_BASE_URL } from '../../config/api';
+import AppIcon from '../../components/shared/AppIcon';
 
 const API = API_BASE_URL;
 
@@ -111,7 +112,7 @@ export default function TrainerRecordings() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 10, marginBottom: 16 }}>
         <div style={{ position: 'relative' }}>
-          <i className="ti ti-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', fontSize: 14 }} />
+          <AppIcon name="search" size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }} />
           <input style={{ ...S.input, paddingLeft: 32 }} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search session…" />
         </div>
         <select style={S.input} value={fSessionType} onChange={e => setFSessionType(e.target.value)}>

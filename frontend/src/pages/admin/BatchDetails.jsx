@@ -14,6 +14,7 @@ import {
   selectAllAdminTrainees,
   selectAdminTraineesStatus,
 } from '../../features/admin/adminSlice';
+import AppIcon from '../../components/shared/AppIcon';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 const STATUS_COLORS = {
@@ -185,7 +186,11 @@ const BatchDetails = () => {
             textAlign: 'center', padding: '60px 20px', color: '#94A3B8',
             background: '#fff', borderRadius: 16, border: '1px solid #E2E8F0',
           }}>
-            <div style={{ fontSize: '3rem', marginBottom: 12 }}>🔍</div>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+                <span style={{ width: 56, height: 56, borderRadius: 16, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <AppIcon name="search" size={24} style={{ color: '#94A3B8' }} />
+                </span>
+              </div>
             <div style={{ fontWeight: 700, fontSize: '0.95rem', marginBottom: 6, color: '#374151' }}>Batch not found</div>
             <div style={{ fontSize: '0.82rem' }}>It may have been deleted, or the link is invalid.</div>
           </div>
@@ -358,8 +363,8 @@ const BatchDetails = () => {
                   <div style={{ position: 'relative' }}>
                     <span style={{
                       position: 'absolute', left: 11, top: '50%',
-                      transform: 'translateY(-50%)', fontSize: '0.85rem', color: '#94A3B8',
-                    }}>🔍</span>
+                      transform: 'translateY(-50%)', fontSize: '0.85rem', color: '#94A3B8', display: 'flex',
+                    }}><AppIcon name="search" size={14} /></span>
                     <input
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
@@ -378,13 +383,21 @@ const BatchDetails = () => {
                   <Spinner />
                 ) : students.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '48px 20px', color: '#94A3B8' }}>
-                    <div style={{ fontSize: '2.4rem', marginBottom: 10 }}>🎓</div>
+                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
+                      <span style={{ width: 52, height: 52, borderRadius: 14, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <AppIcon name="school" size={22} style={{ color: '#3B82F6' }} />
+                      </span>
+                    </div>
                     <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#374151', marginBottom: 4 }}>No students enrolled yet</div>
                     <div style={{ fontSize: '0.8rem' }}>Students assigned to this batch will appear here.</div>
                   </div>
                 ) : filteredStudents.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '48px 20px', color: '#94A3B8' }}>
-                    <div style={{ fontSize: '2.4rem', marginBottom: 10 }}>🔍</div>
+                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
+                      <span style={{ width: 52, height: 52, borderRadius: 14, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <AppIcon name="search" size={22} style={{ color: '#64748B' }} />
+                      </span>
+                    </div>
                     <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#374151' }}>No students match your search</div>
                   </div>
                 ) : (

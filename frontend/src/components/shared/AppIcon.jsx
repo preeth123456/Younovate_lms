@@ -19,7 +19,7 @@ import {
   ScreenShareOff, GitBranch, GitMerge, Armchair, ChartColumn, BadgeCheck,
   Clock, Tag, Bookmark, Printer, Share2, EllipsisVertical, House,
   CirclePlus, FileChartColumn, School, CircleGauge, Sparkles, Phone,
-  Folder, ExternalLink, Undo2, CircleUser, Briefcase,
+  Folder, ExternalLink, Undo2, CircleUser, Briefcase, Crosshair,
 } from 'lucide-react';
 
 // Legacy Tabler (`ti ti-*`) name → Lucide component.
@@ -134,6 +134,11 @@ const MAP = {
   circle: Circle,
   'circle-x': CircleX,
   warning: TriangleAlert,
+  alert: TriangleAlert,
+  'alert-triangle': TriangleAlert,
+  target: Crosshair,
+  layers: Layers,
+  'layout-grid': LayoutDashboard,
   user_round: UserRound,
   user_circle: CircleUser,
   briefcase: Briefcase,

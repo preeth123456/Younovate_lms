@@ -533,7 +533,15 @@ const stopRecordingSession = async (req, res) => {
     const stoppedEgressId = session.egressId;
     let recordingDoc = null;
     try {
-      recordingDoc = await reconcileRecordingByEgressId(stoppedEgressId, { maxAttempts: 15, delayMs: 2000, markFailed: true });
+      // Post-stop reconcile: poll the LiveKit EGRESS API (authoritative —
+      // works for Cloud S3 output where no local /out JSON exists) instead of
+      // the old local-disk loop that produced the repeated
+      // `cat: /out/.../EG_xxx.json: No such file` errors. markFailed=false:
+      // only the webhook may flip processing → completed/failed, so Stop can
+      // never falsely fail a recording whose S3 upload is still landing.
+      recordingDoc = await reconcileRecordingByEgressId(stoppedEgressId, {
+        maxAttempts: 20, delayMs: 3000, markFailed: false, useApiFallback: true,
+      });
       if (recordingDoc?.status === 'completed') {
         session.recordingStatus = 'available';
         session.recordingUrl = recordingDoc.url || session.recordingUrl;

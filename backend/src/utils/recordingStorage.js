@@ -214,15 +214,18 @@ async function tryReconcileFromLiveKitApi(egressId, recording) {
     const eg = await getEgressInfo(egressId);
     if (!eg) return null;
 
+    const status = String(eg.status || '').toUpperCase();
+    // Only EGRESS_COMPLETE may finalize. FAILED/ABORTED must NOT touch the
+    // DB here — only the egress_ended webhook may mark failed — and anything
+    // else means still active/uploading → keep polling.
+    if (status === 'EGRESS_FAILED' || status === 'EGRESS_ABORTED' || status === '4' || status === '5') {
+      return { failed: true, status: eg.status };
+    }
+    if (status !== 'EGRESS_COMPLETE' && status !== '3') return null;
+
     const file = eg.fileResults?.[0] || eg.file?.fileResults?.[0] || {};
     const resolved = resolveEgressFileUrl(file);
     if (resolved.storage !== 's3' || !resolved.url) return null;
-
-    const durationSeconds = file.duration ? Math.round(Number(file.duration) / 1e9) : 0;
-    const sizeBytes = file.size ? Number(file.size) : 0;
-    const isComplete = isTerminalEgressStatus(eg.status) || resolved.url;
-
-    if (!isComplete) return null;
 
     return finalizeRecordingRemote(recording, {
       url: resolved.url,
@@ -320,13 +323,17 @@ function resolveRelPathFromEgressMeta(egressId, roomName) {
   }
 
   try {
-    const raw = execSync(
-      `docker exec ${EGRESS_CONTAINER} cat /out/${roomName}/${egressId}.json`,
-      { encoding: 'utf8', timeout: 10000, windowsHide: true }
-    );
-    const data = JSON.parse(raw);
-    const f = data.files?.[0]?.filename || data.files?.[0]?.location || '';
-    return normalizeRelPath(f);
+    // Same Cloud guard as readEgressMediaDuration: no local /out JSON in
+    // Cloud mode, so never `docker exec ... cat` here either.
+    if (/^wss?:\/\/(localhost|127\.0\.0\.1)/i.test(String(process.env.LIVEKIT_URL || ''))) {
+      const raw = execSync(
+        `docker exec ${EGRESS_CONTAINER} cat /out/${roomName}/${egressId}.json`,
+        { encoding: 'utf8', timeout: 10000, windowsHide: true }
+      );
+      const data = JSON.parse(raw);
+      const f = data.files?.[0]?.filename || data.files?.[0]?.location || '';
+      return normalizeRelPath(f);
+    }
   } catch (_) {
     return '';
   }
@@ -438,6 +445,14 @@ function readEgressMediaDuration(egressId, roomName) {
     if (fs.existsSync(hostJson)) {
       raw = fs.readFileSync(hostJson, 'utf8');
     } else {
+      // Docker egress container is an OPTIONAL local path only. In LiveKit
+      // Cloud mode there is no /out/... JSON at all (egress uploads to S3),
+      // so never shell out to docker here — the old `docker exec ... cat`
+      // is exactly what printed the repeated
+      // `cat: /out/.../EG_xxx.json: No such file` errors after Stop.
+      if (!/^wss?:\/\/(localhost|127\.0\.0\.1)/i.test(String(process.env.LIVEKIT_URL || ''))) {
+        return 0;
+      }
       raw = execSync(
         `docker exec ${EGRESS_CONTAINER} cat /out/${roomName}/${egressId}.json`,
         { encoding: 'utf8', timeout: 10000, windowsHide: true }
@@ -622,7 +637,7 @@ async function finalizeRecordingOnDisk(recording, relPath, sizeBytes) {
   return updated;
 }
 
-async function reconcileRecordingByEgressId(egressId, { maxAttempts = 1, delayMs = 0, markFailed = false } = {}) {
+async function reconcileRecordingByEgressId(egressId, { maxAttempts = 1, delayMs = 0, markFailed = false, useApiFallback = false } = {}) {
   if (!egressId) return null;
 
   const Recording = require('../models/Recording');
@@ -646,8 +661,21 @@ async function reconcileRecordingByEgressId(egressId, { maxAttempts = 1, delayMs
         });
         if (finalized) return finalized;
       }
-      const fromApi = await tryReconcileFromLiveKitApi(egressId, recording);
-      if (fromApi) return fromApi;
+      // Authoritative fallback: query the LiveKit EGRESS API directly.
+      // In Cloud mode there is no local /out JSON, so this is the ONLY way
+      // Stop can observe EGRESS_COMPLETE + fileResults and finalize to
+      // Available without waiting on the webhook. Gated behind
+      // useApiFallback so read-only callers (playback, lists) never add
+      // egress-API latency to hot paths.
+      if (useApiFallback) {
+        const fromApi = await tryReconcileFromLiveKitApi(egressId, recording);
+        // { failed:true } is a signal, not a doc — Stop ignores it (only the
+        // webhook may mark failed) and keeps polling / returns processing.
+        if (fromApi && !fromApi.failed) return fromApi;
+      } else {
+        const fromApi = await tryReconcileFromLiveKitApi(egressId, recording);
+        if (fromApi && !fromApi.failed && fromApi.status === 'completed') return fromApi;
+      }
     }
 
     if (recording.status === 'completed') {
@@ -693,7 +721,7 @@ async function reconcileRecordingByEgressId(egressId, { maxAttempts = 1, delayMs
 
     if (isS3Configured()) {
       const fromApi = await tryReconcileFromLiveKitApi(egressId, recording);
-      if (fromApi) return fromApi;
+      if (fromApi && !fromApi.failed) return fromApi;
     }
   }
 
@@ -703,7 +731,22 @@ async function reconcileRecordingByEgressId(egressId, { maxAttempts = 1, delayMs
   if (markFailed && ['processing', 'active'].includes(recording.status)) {
     if (isS3Configured()) {
       const fromApi = await tryReconcileFromLiveKitApi(egressId, recording);
-      if (fromApi) return fromApi;
+      if (fromApi && !fromApi.failed) return fromApi;
+      // { failed:true } from the API means LiveKit genuinely failed the
+      // egress — surface that instead of the generic "not found" message.
+      if (fromApi && fromApi.failed) {
+        const failed = await Recording.findOneAndUpdate(
+          { egressId },
+          { $set: { status: 'failed', error: 'LiveKit egress reported failure for this recording.' } },
+          { new: true }
+        ).lean();
+        if (failed?.sessionId) {
+          await Session.findByIdAndUpdate(failed.sessionId, {
+            $set: { recordingStatus: 'failed', egressId: '' },
+          });
+        }
+        return failed;
+      }
     }
     const error = isS3Configured()
       ? 'Recording file was not found in S3 after processing. Check bucket policy and LiveKit webhook.'

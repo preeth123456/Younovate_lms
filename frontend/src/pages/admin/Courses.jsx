@@ -20,6 +20,7 @@ import {
   clearCourseErrors,
   resetCourseCreateStatus,
 } from '../../features/admin/courseSlice';
+import AppIcon from '../../components/shared/AppIcon';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -278,21 +279,21 @@ const CourseCard = ({ course, idx, onView, onEdit, onDelete }) => {
               width: 30, height: 30, borderRadius: 7, background: '#F8FAFC',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem',
             }}
-            title="View">👁️</button>
+            title="View"><AppIcon name="eye" size={14} /></button>
           <button className="icon-btn"
             onClick={(e) => { e.stopPropagation(); onEdit(course); }}
             style={{
               width: 30, height: 30, borderRadius: 7, background: '#F8FAFC',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem',
             }}
-            title="Edit">✏️</button>
+            title="Edit"><AppIcon name="edit" size={14} /></button>
           <button className="icon-btn del-btn"
             onClick={(e) => { e.stopPropagation(); onDelete(course); }}
             style={{
               width: 30, height: 30, borderRadius: 7, background: '#F8FAFC',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem',
             }}
-            title="Delete">🗑️</button>
+            title="Delete"><AppIcon name="trash" size={14} /></button>
         </div>
       </div>
 
@@ -683,8 +684,8 @@ const Courses = () => {
           <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
             <span style={{
               position: 'absolute', left: 11, top: '50%',
-              transform: 'translateY(-50%)', fontSize: '0.85rem', color: '#94A3B8',
-            }}>🔍</span>
+              transform: 'translateY(-50%)', fontSize: '0.85rem', color: '#94A3B8', display: 'flex',
+            }}><AppIcon name="search" size={14} /></span>
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search by name, code, level, tag…"
               className="fi"

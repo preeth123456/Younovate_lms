@@ -17,6 +17,7 @@ const NAV = [
       { to: '/trainer/module-assessments', icon: 'file-analytics', label: 'Assessments' },
       { to: '/trainer/recordings', icon: 'record-actor',    label: 'Recordings' },
       { to: '/trainer/feedback',   icon: 'star',            label: 'Feedback'   },
+      { to: '/trainer/certificates', icon: 'certificate',   label: 'Certificates' },
       { to: '/trainer/batches',    icon: 'stack-2',         label: 'My Batches' },
     ],
   },

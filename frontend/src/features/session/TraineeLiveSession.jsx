@@ -31,8 +31,11 @@ const TraineeLiveSession = ({ session, connection: connectionProp, onLeave }) =>
 
     const fetchJoinStatus = async () => {
       try {
+        const isLms = String(session?.sessionType || 'LMS').toUpperCase() !== 'WORKSHOP';
         const { data } = await axios.get(
-          `${API}/api/trainee/sessions/${sessionId}/join-status`,
+          isLms
+            ? `${API}/api/trainee/sessions/${sessionId}/join-status`
+            : `${API}/api/trainee/workshop-sessions/${sessionId}/join-status`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
         if (data.success) {
@@ -52,7 +55,7 @@ const TraineeLiveSession = ({ session, connection: connectionProp, onLeave }) =>
     fetchJoinStatus();
     const interval = setInterval(fetchJoinStatus, 5000); // Poll every 5s
     return () => clearInterval(interval);
-  }, [sessionId, token, status]);
+  }, [sessionId, token, status, session?.sessionType]);
 
   // Countdown timer
   useEffect(() => {
@@ -72,8 +75,11 @@ const TraineeLiveSession = ({ session, connection: connectionProp, onLeave }) =>
     setStatus('connecting');
     setError(null);
     try {
+      const isLms = String(session?.sessionType || 'LMS').toUpperCase() !== 'WORKSHOP';
       const { data } = await axios.post(
-        `${API}/api/trainee/workshop-sessions/${sessionId}/join`,
+        isLms
+          ? `${API}/api/trainee/sessions/${sessionId}/join`
+          : `${API}/api/trainee/workshop-sessions/${sessionId}/join`,
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );

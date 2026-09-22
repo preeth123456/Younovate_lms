@@ -35,6 +35,7 @@ const NAV = [
       { to: '/admin/assignments',   icon: 'clipboard-list', label: 'Assignments'   },
       { to: '/admin/module-assessments', icon: 'file-analytics', label: 'Assessments' },
       { to: '/admin/feedback',      icon: 'star',           label: 'Feedback'      },
+      { to: '/admin/certificates',  icon: 'certificate',    label: 'Certificates'  },
       { to: '/admin/registrations', icon: 'clipboard-list',label: 'Registrations' },
     ],
   },

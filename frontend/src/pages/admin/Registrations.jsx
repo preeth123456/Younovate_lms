@@ -3,12 +3,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import {
   fetchRegistrations,
-  convertLead,
   createRegistration,
   updateRegistration,
   deleteRegistration,
   selectAllRegistrations,
 } from '../../features/admin/adminSlice';
+import { API_BASE_URL } from '../../config/api';
+import AppIcon from '../../components/shared/AppIcon';
 
 // Toast look-up (icon glyph + colours) — identical to other admin pages.
 const TOAST = {
@@ -76,6 +77,30 @@ export default function AdminRegistrations() {
 
   const [activeTab, setActiveTab] = useState('all');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [courseData, setCourseData] = useState({ courses: [], loading: true });
+
+  // Fetch courses for program interest dropdown (existing course data source,
+  // never hardcoded — falls back to YIEP/YBLP only if the list is empty).
+  useEffect(() => {
+    const fetchCourses = async () => {
+      try {
+        const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+        const res = await fetch(`${API_BASE_URL}/api/courses?limit=0`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const data = await res.json();
+        if (data.success && data.data?.courses) {
+          setCourseData({ courses: data.data.courses, loading: false });
+        } else {
+          setCourseData({ courses: [], loading: false });
+        }
+      } catch (err) {
+        console.warn('Failed to fetch courses for program interest:', err);
+        setCourseData({ courses: [], loading: false });
+      }
+    };
+    fetchCourses();
+  }, []);
 
   // ── Built-in toast queue — identical pattern to other admin pages ──
   const [toasts, setToasts] = useState([]);
@@ -146,24 +171,6 @@ export default function AdminRegistrations() {
   const endIdx = Math.min(total, page * pageSize);
 
   // ── Actions ──
-  const handleConvert = async (id, name) => {
-    const idString = typeof id === 'object' ? id._id || id.id : id;
-    setBusyId(idString);
-    try {
-      const result = await dispatch(convertLead({ id: idString }));
-      if (convertLead.fulfilled.match(result)) {
-        pushToast('success', `${name || 'Lead'} converted to trainee`);
-        dispatch(fetchRegistrations());
-      } else {
-        pushToast('error', result.payload || 'Failed to convert lead');
-      }
-    } catch (err) {
-      pushToast('error', 'Failed to convert lead');
-    } finally {
-      setBusyId(null);
-    }
-  };
-
   const handleAddLead = async (formData) => {
     const result = await dispatch(createRegistration(formData));
     if (createRegistration.fulfilled.match(result)) {
@@ -253,12 +260,18 @@ export default function AdminRegistrations() {
     return (
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         {stage === 'registered' ? (
-          <button onClick={() => handleConvert(idString, r.fullName || r.name)} disabled={rowBusy} style={btnConvert(rowBusy)}>
-            {rowBusy ? '…' : 'Convert'}
-          </button>
+          <select
+            value={stage}
+            onChange={(e) => handleUpdateStatus(idString, e.target.value)}
+            disabled={rowBusy}
+            style={{ ...input, width: 'auto', padding: '6px 8px', fontSize: 12.5 }}
+          >
+            <option value="registered">Registered</option>
+            <option value="enrolled">Enrolled</option>
+          </select>
         ) : stage === 'enrolled' ? (
           <span style={{ color: '#16a05f', fontSize: 12, fontWeight: 700 }}>Active Trainee</span>
-        ) : (
+        ) : stage === 'new' || stage === 'contacted' ? (
           <select
             value={stage}
             onChange={(e) => handleUpdateStatus(idString, e.target.value)}
@@ -267,16 +280,17 @@ export default function AdminRegistrations() {
           >
             <option value="new">New</option>
             <option value="contacted">Contacted</option>
+            <option value="registered">Registered</option>
             <option value="enrolled">Enrolled</option>
           </select>
-        )}
+        ) : null}
         <button
           onClick={() => handleDelete(idString, r.fullName || r.name)}
           disabled={rowBusy || stage === 'enrolled'}
           title={stage === 'enrolled' ? 'Active trainees cannot be deleted here' : 'Delete registration'}
           style={btnDelete(rowBusy || stage === 'enrolled')}
         >
-          🗑️
+          <AppIcon name="trash" size={14} />
         </button>
       </div>
     );
@@ -387,7 +401,7 @@ export default function AdminRegistrations() {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="🔎  Search by name or contact…"
+          placeholder="Search by name or contact…"
           style={{ ...input, maxWidth: isMobile ? '100%' : 240 }}
         />
       </div>
@@ -488,7 +502,7 @@ export default function AdminRegistrations() {
 
       {/* Add Lead modal */}
       {showAddModal && (
-        <AddLeadModal isOpen={showAddModal} isMobile={isMobile} onClose={() => setShowAddModal(false)} onSubmit={handleAddLead} />
+        <AddLeadModal isOpen={showAddModal} isMobile={isMobile} onClose={() => setShowAddModal(false)} onSubmit={handleAddLead} courseData={courseData} />
       )}
 
       {/* Confirm dialog (built-in, replaces window.confirm) */}
@@ -535,7 +549,7 @@ export default function AdminRegistrations() {
 }
 
 // ── Add Lead modal ──────────────────────────────────────────────────────────────
-function AddLeadModal({ isOpen, isMobile, onClose, onSubmit }) {
+function AddLeadModal({ isOpen, isMobile, onClose, onSubmit, courseData }) {
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -642,10 +656,22 @@ function AddLeadModal({ isOpen, isMobile, onClose, onSubmit }) {
               style={{ ...input, border: `1px solid ${errors.programInterest ? '#c0392b' : '#dbe3ed'}` }}
               value={form.programInterest}
               onChange={(e) => setField('programInterest', e.target.value)}
+              disabled={courseData.loading}
             >
               <option value="">Select program</option>
-              <option value="YIEP">YIEP — Young India Employment Program</option>
-              <option value="YBLP">YBLP — Young Business Leadership Program</option>
+              {courseData.loading
+                ? <option value="" disabled>Loading programs…</option>
+                : courseData.courses.map((c) => (
+                    <option key={c._id} value={c.code}>
+                      {c.code} — {c.name}
+                    </option>
+                  ))}
+              {courseData.courses.length === 0 && !courseData.loading && (
+                <>
+                  <option value="YIEP">YIEP — Young India Employment Program</option>
+                  <option value="YBLP">YBLP — Young Business Leadership Program</option>
+                </>
+              )}
             </select>
             {errors.programInterest && <FieldError text={errors.programInterest} />}
           </Field>

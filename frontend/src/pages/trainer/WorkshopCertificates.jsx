@@ -12,6 +12,7 @@ import { S, Pill, Empty, PageHeader, KPICard, fmtDate, WorkshopSelector } from '
 import axios from 'axios';
 import { API_BASE_URL } from 'utils/apiConfig';
 import toast from 'react-hot-toast';
+import AppIcon from '../../components/shared/AppIcon';
 
 const CSS = `@keyframes spin{to{transform:rotate(360deg)}} .ws-row:hover{background:#f9fafb!important}`;
 
@@ -103,7 +104,7 @@ export default function WorkshopCertificates() {
       {/* Filters */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: '1 1 220px' }}>
-          <i className="ti ti-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontSize: 14 }} />
+          <AppIcon name="search" size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
           <input style={{ ...S.input, paddingLeft: 32 }} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search student&hellip;" />
         </div>
         <select style={{ ...S.input, flex: '0 0 160px' }} value={fStatus} onChange={e => setFStatus(e.target.value)}>

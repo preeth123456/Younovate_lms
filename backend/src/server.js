@@ -43,6 +43,7 @@ const searchRoutes       = require('./routes/searchRoutes');
 const workshopSessionRoutes = require('./routes/workshopSessionRoutes');
 const livekitTokenRoutes = require('./routes/livekit');
 const notificationRoutes = require('./routes/notificationRoutes');
+const lmsCertificateRoutes = require('./routes/lmsCertificateRoutes');
 const lmsAssessmentRoutes = require('./routes/lmsAssessmentRoutes');
 const publicRegistrationRoutes = require('./routes/publicRegistrationRoutes');
 require('./jobs/autoEndSessions');
@@ -127,6 +128,7 @@ app.use('/api/workshops',      workshopRoutes);
 app.use('/api/search',         searchRoutes);
 app.use('/api/workshop-sessions', workshopSessionRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/lms-certificates', lmsCertificateRoutes);
 app.use('/api/lms-assessments', lmsAssessmentRoutes);
 app.use('/api/public-registrations', publicRegistrationRoutes);
 

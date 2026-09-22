@@ -9,6 +9,7 @@ import {
   selectSelectedWorkshopId,
 } from '../../features/Trainer/trainerWorkshopSlice';
 import { S, Empty, PageHeader, KPICard, fmtDateTime, WorkshopSelector } from './workshopShared';
+import AppIcon from '../../components/shared/AppIcon';
 
 const API = API_BASE_URL;
 
@@ -155,7 +156,7 @@ export default function WorkshopFeedback() {
           {/* Filters */}
           <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
             <div style={{ position: 'relative', flex: '1 1 220px' }}>
-              <i className="ti ti-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontSize: 14 }} />
+              <AppIcon name="search" size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
               <input style={{ ...S.input, paddingLeft: 32 }} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search student or comment…" />
             </div>
             <select style={{ ...S.input, flex: '0 0 140px' }} value={fRating} onChange={e => setFRating(e.target.value)}>
