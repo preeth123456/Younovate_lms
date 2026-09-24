@@ -9,7 +9,10 @@ const Enrollment = require('../models/Enrollment');
 const LessonProgress = require('../models/LessonProgress');
 const Course     = require('../models/Course');
 const WorkshopBatch = require('../models/WorkshopBatch');
+const User = require('../models/User');
 const LmsFeedback = require('../models/LmsFeedback');
+const Recording = require('../models/Recording');
+const { resolveRecordingPlaybackAsync, recordingSourceFromSession } = require('../utils/recordingStorage');
 const { WorkshopAttendance, WorkshopCertificate } = require('../models/WorkshopModels');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -325,8 +328,100 @@ router.get('/attendance', async (req, res) => {
   }
 });
 
+// GET /api/trainee/sessions/:id/recording/playback — presigned URL for an enrolled trainee.
+// Mirrors the trainer playback endpoint but scopes access to the trainee's own
+// sessions (batch/trainee-list membership or attendance record). Never returns
+// the raw private S3 URL — only a temporary presigned GET URL (1h).
+router.get('/sessions/:id/recording/playback', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid session ID' });
+    }
+    const session = await Session.findOne({ _id: req.params.id, ...LMS_FILTER }).lean();
+    if (!session) {
+      return res.status(404).json({ success: false, message: 'Session not found' });
+    }
+    const enrolled = ensureEnrolled(session, req.user);
+    const attended = enrolled || await Attendance.exists({ trainee: req.user._id, session: session._id });
+    if (!attended) {
+      return res.status(403).json({ success: false, message: 'Not enrolled in this session' });
+    }
+    if (!session.recordingUrl && session.recordingStatus !== 'available') {
+      return res.status(404).json({ success: false, message: 'No recording available for this session' });
+    }
+    const recordingDoc = await Recording.findOne({ sessionId: session._id, status: 'completed' })
+      .sort({ createdAt: -1 })
+      .lean();
+    const source = recordingDoc || recordingSourceFromSession(session);
+    if (!source) {
+      return res.status(404).json({ success: false, message: 'Recording not found' });
+    }
+    const { url, playable } = await resolveRecordingPlaybackAsync(source);
+    if (!playable || !url) {
+      return res.status(404).json({ success: false, message: 'Recording file is not available for playback' });
+    }
+    return res.json({ success: true, url, playable, expiresIn: 3600 });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/trainee/workshop-sessions/:id/recording/playback — same, for workshop trainees.
+// Access: trainee's workshop batch membership or workshop attendance record.
+router.get('/workshop-sessions/:id/recording/playback', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid session ID' });
+    }
+    const session = await Session.findOne({ _id: req.params.id, sessionType: 'WORKSHOP' }).lean();
+    if (!session) {
+      return res.status(404).json({ success: false, message: 'Workshop session not found' });
+    }
+    const batchIds = await getWorkshopBatchIdsForUser(req.user._id, WorkshopBatch);
+    const inBatch = session.workshopBatchId && batchIds.map(String).includes(String(session.workshopBatchId));
+    const attended = inBatch || await WorkshopAttendance.exists({ studentId: req.user._id, sessionId: session._id });
+    if (!attended) {
+      return res.status(403).json({ success: false, message: 'Not enrolled in this session' });
+    }
+    if (!session.recordingUrl && session.recordingStatus !== 'available') {
+      return res.status(404).json({ success: false, message: 'No recording available for this session' });
+    }
+    const recordingDoc = await Recording.findOne({ sessionId: session._id, status: 'completed' })
+      .sort({ createdAt: -1 })
+      .lean();
+    const source = recordingDoc || recordingSourceFromSession(session);
+    if (!source) {
+      return res.status(404).json({ success: false, message: 'Recording not found' });
+    }
+    const { url, playable } = await resolveRecordingPlaybackAsync(source);
+    if (!playable || !url) {
+      return res.status(404).json({ success: false, message: 'Recording file is not available for playback' });
+    }
+    return res.json({ success: true, url, playable, expiresIn: 3600 });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
 // GET /api/trainee/profile
 router.get('/profile', (req, res) => res.json({ success: true, user: req.user.toPublic() }));
+// GET /api/trainee/placement - read-only placement result for the logged-in trainee (HR writes, trainee reads)
+router.get('/placement', async (req, res) => {
+  try {
+    const me = await User.findById(req.user._id).select('name email placementStatus placementNote companyName ctc placementUpdatedAt').lean();
+    if (!me) return res.status(404).json({ success: false, message: 'User not found' });
+    const InterviewM = require('../models/Interview');
+    const OfferM = require('../models/Offer');
+    const PlacementM = require('../models/Placement');
+    const EvaluationM = require('../models/Evaluation');
+    const [interviews, offers, placements, evaluations] = await Promise.all([
+      InterviewM.find({ trainee: req.user._id }).populate('company', 'name').populate('job', 'title').sort({ scheduledAt: -1 }).lean(),
+      OfferM.find({ candidate: req.user._id }).populate('company', 'name').populate('job', 'title').sort({ createdAt: -1 }).lean(),
+      PlacementM.find({ candidate: req.user._id }).populate('company', 'name').populate('job', 'title').sort({ createdAt: -1 }).lean(),
+      EvaluationM.find({ candidate: req.user._id }).sort({ createdAt: -1 }).lean(),
+    ]);
+    return res.json({ success: true, status: me.placementStatus, note: me.placementNote || '', companyName: me.companyName || '', ctc: me.ctc || '', updatedAt: me.placementUpdatedAt || null, interviews, offers, placements, evaluations });
+  } catch (err) { return res.status(500).json({ success: false, message: err.message }); }
+});
 
 // WORKSHOP ROUTES
 

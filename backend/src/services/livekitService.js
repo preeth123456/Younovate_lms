@@ -139,6 +139,28 @@ function buildFileOutput() {
   });
 }
 
+// Translate low-level LiveKit/SDK errors into actionable messages.
+// Never leaks secrets: redacts anything resembling keys/secrets from SDK text.
+function explainEgressStartError(err) {
+  const raw = String(err?.message || err || 'Egress start failed');
+  const clean = raw
+    .replace(/(accessKey|secret|api[_-]?secret|token)[=: ][^,\s}]*/gi, '$1=<redacted>');
+  if (/no response from servers|unavailable|code[=: ]?503/i.test(raw)) {
+    return new Error(
+      'Egress service did not answer the StartEgress request (LiveKit returned "no response from servers"). ' +
+      'The egress worker is unreachable or version-incompatible: verify the egress container is running, ' +
+      'on the same Redis/network, and pinned to the SAME minor version as livekit-server ' +
+      '(see docker-compose.livekit-dev.yml). Underlying: ' + clean
+    );
+  }
+  if (/timed out/i.test(raw)) {
+    const e = new Error(clean);
+    e.isTimeout = true;
+    return e;
+  }
+  return new Error(clean);
+}
+
 async function startRecording(roomName) {
   if (!apiKey || !apiSecret || !LIVEKIT_URL || !host) {
     throw new Error('LiveKit is not configured (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET).');
@@ -155,14 +177,18 @@ async function startRecording(roomName) {
 
   try {
     const output = buildFileOutput();
+    // Room-composite egress handshake: LiveKit must dispatch the request to a
+    // compatible worker over Redis. 30s is the API guard only — it never hides
+    // the underlying error (see explainEgressStartError below).
     const info = await Promise.race([
       egressClient.startRoomCompositeEgress(roomName, output),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('LiveKit egress start timed out')), 15000)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('LiveKit egress start timed out waiting for a worker response (30s)')), 30000)),
     ]);
-    return info?.egressId || null;
+    if (!info?.egressId) throw new Error('LiveKit returned no egress ID for room ' + roomName);
+    return info.egressId;
   } catch (err) {
     console.error('startRecording failed:', err.message);
-    throw err;
+    throw explainEgressStartError(err);
   }
 }
 

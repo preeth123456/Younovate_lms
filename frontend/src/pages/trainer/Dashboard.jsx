@@ -3,7 +3,6 @@ import { useDispatch, useSelector } from 'react-redux';
 import axios from 'axios';
 import { API_BASE_URL } from '../../config/api';
 import WatchRecordingButton from '../../components/recording/WatchRecordingButton';
-import NotificationBell from '../../components/shared/NotificationBell';
 import AppIcon from '../../components/shared/AppIcon';
 
 // ── LiveKit (third-party real-time video) ─────────────────────────────────────
@@ -1719,7 +1718,6 @@ const TrainerDashboard = () => {
                 )}
               </div>
             </div>
-            <NotificationBell />
           </div>
         </div>
 

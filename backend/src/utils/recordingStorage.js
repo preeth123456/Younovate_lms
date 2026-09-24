@@ -227,6 +227,11 @@ async function tryReconcileFromLiveKitApi(egressId, recording) {
     const resolved = resolveEgressFileUrl(file);
     if (resolved.storage !== 's3' || !resolved.url) return null;
 
+    // Duration arrives in nanoseconds, size in bytes (same convention as
+    // buildUpdateFromEvent in the egress_ended webhook handler).
+    const sizeBytes = file.size ? Number(file.size) : 0;
+    const durationSeconds = file.duration ? Math.round(Number(file.duration) / 1e9) : 0;
+
     return finalizeRecordingRemote(recording, {
       url: resolved.url,
       filename: resolved.filename,

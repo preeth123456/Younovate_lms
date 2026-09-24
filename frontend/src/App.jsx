@@ -114,13 +114,23 @@ import TraineeWorkshopFeedback from './pages/trainee/WorkshopFeedback';
 import TraineeProgress from './pages/trainee/Progress';
 import TraineeLmsCertificates from './pages/trainee/LmsCertificates';
 import TraineeCertificates from './pages/trainee/TraineeCertificates';
+import TraineePlacement from './pages/trainee/Placement';
 import GlobalSearch from './pages/shared/GlobalSearch';
 
 
 
 
-import HRDashboard   from './pages/hr/Dashboard';
 import HRInterviews  from './pages/hr/Interviews';
+import HRInterviewsV2 from './pages/hr/InterviewsV2';
+import HROverview from './pages/hr/Overview';
+import HRCandidates from './pages/hr/Candidates';
+import HRCompanies from './pages/hr/Companies';
+import HRJobs from './pages/hr/Jobs';
+import HREvaluations from './pages/hr/Evaluations';
+import HROffers from './pages/hr/Offers';
+import HRPlacements from './pages/hr/Placements';
+import HRReports from './pages/hr/Reports';
+import HRNotifications from './pages/hr/Notifications';
 import HRPipeline    from './pages/hr/Pipeline';
 import HREvaluation  from './pages/hr/Evaluation';
 import HREvaluationsList from './pages/hr/EvaluationsList';
@@ -280,6 +290,7 @@ function App() {
           <Route path="progress"  element={<TraineeProgress />} />
           <Route path="lms-certificates" element={<TraineeLmsCertificates />} />
           <Route path="certificates" element={<TraineeCertificates />} />
+          <Route path="placement" element={<TraineePlacement />} />
           <Route path="settings"    element={<TraineeSettings />} />
           <Route path="profile" element={<Profile />} />
           <Route path="courses" element={<TraineeCourses />} />
@@ -292,15 +303,24 @@ function App() {
           </Route>
         </Route>
 
-        {/* HR */}
+        {/* HR — 11 primary menus (legacy pipeline/evaluation routes preserved) */}
         <Route element={<ProtectedRoute allowedRoles={['hr']} />}>
           <Route path="/hr" element={<HRLayout />}>
-            <Route path="dashboard"  element={<HRDashboard />} />
-            <Route path="search"     element={<GlobalSearch />} />
-            <Route path="interviews" element={<HRInterviews />} />
+            <Route path="dashboard"  element={<HROverview />} />
+            <Route path="candidates" element={<HRCandidates />} />
+            <Route path="companies" element={<HRCompanies />} />
+            <Route path="jobs" element={<HRJobs />} />
+            <Route path="interviews" element={<HRInterviewsV2 />} />
+            <Route path="interviews-legacy" element={<HRInterviews />} />
             <Route path="pipeline"   element={<HRPipeline />} />
-            <Route path="evaluations" element={<HREvaluationsList />} />
+            <Route path="evaluations" element={<HREvaluations />} />
+            <Route path="evaluations-legacy" element={<HREvaluationsList />} />
             <Route path="evaluation/:id" element={<HREvaluation />} />
+            <Route path="offers" element={<HROffers />} />
+            <Route path="placements" element={<HRPlacements />} />
+            <Route path="reports" element={<HRReports />} />
+            <Route path="notifications" element={<HRNotifications />} />
+            <Route path="search"     element={<GlobalSearch />} />
             <Route path="settings" element={<HRSettings />} />
              <Route path="profile" element={<Profile />} />
             <Route index element={<Navigate to="dashboard" replace />} />

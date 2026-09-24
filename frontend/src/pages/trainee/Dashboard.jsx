@@ -22,7 +22,6 @@ import {
   selectJoinError,
 } from '../../features/trainee/traineeSlice';
 import LiveRoom from '../../components/live/LiveRoom';
-import NotificationBell from '../../components/shared/NotificationBell';
 
 const C = { accent: '#4F46E5', green: '#059669', red: '#DC2626', amber: '#D97706', text1: '#111827', text3: '#6B7280', border: '#E5E7EB', card: '#fff' };
 const card = { background: C.card, borderRadius: 12, padding: '20px 24px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', marginBottom: 16 };
@@ -118,9 +117,8 @@ export default function TraineeDashboard() {
 
   return (
     <div style={{ padding: 24, fontFamily: 'Calibri, sans-serif', maxWidth: 1100, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+      <div style={{ marginBottom: 20 }}>
         <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 0, color: C.text1 }}>My Dashboard</h2>
-        <NotificationBell />
       </div>
 
       {/* ── Stats Row ── */}

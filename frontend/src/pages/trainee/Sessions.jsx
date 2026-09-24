@@ -20,6 +20,7 @@ import {
   selectLmsError,
 } from '../../features/trainee/traineeSlice';
 import LiveRoom from '../../components/live/LiveRoom';
+import { API_BASE_URL } from '../../config/api';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 const fmtDT = (d) =>
@@ -60,6 +61,49 @@ function useCountdown(secondsUntilStart) {
   return `${s}s`;
 }
 
+// ── Trainee recording playback ──────────────────────────────────────────────
+// Fetches a temporary authorized URL from the trainee playback endpoint
+// (backend presigns S3 after verifying enrollment). Never opens the raw
+// stored S3 URL, which is private and returns XML AccessDenied.
+function TraineeWatchButton({ sessionId, workshop }) {
+  const [state, setState] = useState({ loading: false, error: '' });
+
+  const open = async () => {
+    if (state.loading) return;
+    setState({ loading: true, error: '' });
+    try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+      const path = workshop
+        ? `/api/trainee/workshop-sessions/${sessionId}/recording/playback`
+        : `/api/trainee/sessions/${sessionId}/recording/playback`;
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success || !data?.url) {
+        throw new Error(data?.message || 'Recording not available yet');
+      }
+      window.open(data.url, '_blank', 'noopener,noreferrer');
+      setState({ loading: false, error: '' });
+    } catch (e) {
+      setState({ loading: false, error: e.message || 'Could not open recording' });
+    }
+  };
+
+  return (
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <button
+        onClick={open}
+        disabled={state.loading}
+        style={{ background: '#475569', color: '#fff', borderRadius: 10, padding: '9px 16px', fontWeight: 700, fontSize: 13, border: 'none', cursor: state.loading ? 'wait' : 'pointer', textAlign: 'center' }}
+      >
+        {state.loading ? 'Opening…' : '▶ Watch Recording'}
+      </button>
+      {state.error ? <span style={{ fontSize: 11, color: '#DC2626' }}>{state.error}</span> : null}
+    </span>
+  );
+}
+
 // ── Workshop Session Card ─────────────────────────────────────────────────────
 function WsSessionCard({ session, onJoin, joiningId, joinStatus }) {
   const countdown = useCountdown(session.secondsUntilStart);
@@ -88,8 +132,11 @@ function WsSessionCard({ session, onJoin, joiningId, joinStatus }) {
       </div>
 
       {isOver ? (
-        <div style={{ fontSize: 12, color: '#94A3B8', fontStyle: 'italic' }}>
-          {session.status === 'completed' ? '✅ Session completed' : '❌ Session cancelled'}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ fontSize: 12, color: '#94A3B8', fontStyle: 'italic' }}>
+            {session.status === 'completed' ? '✅ Session completed' : '❌ Session cancelled'}
+          </div>
+          {session.recordingUrl ? <TraineeWatchButton sessionId={session._id} workshop /> : null}
         </div>
       ) : joinable ? (
         <button
@@ -299,10 +346,7 @@ export default function TraineeSessions() {
                     </div>
                     <div style={{ fontSize: 12, color: '#64748B' }}>📅 {fmtDT(session.scheduledAt)} · 👤 {session.trainerId?.name || 'TBD'}</div>
                     {isOver && session.recordingUrl ? (
-                      <a href={session.recordingUrl} target="_blank" rel="noreferrer"
-                        style={{ background: '#475569', color: '#fff', borderRadius: 10, padding: '9px 16px', fontWeight: 700, fontSize: 13, textDecoration: 'none', textAlign: 'center' }}>
-                        ▶ Watch Recording
-                      </a>
+                      <TraineeWatchButton sessionId={session._id} workshop={false} />
                     ) : (
                       <button onClick={() => handleLmsJoin(session)} disabled={!isLive || isJoining}
                         style={{ background: isLive ? '#15803D' : '#E2E8F0', color: isLive ? '#fff' : '#94A3B8', border: 'none', borderRadius: 10, padding: '9px 16px', fontWeight: 700, fontSize: 13, cursor: isLive ? 'pointer' : 'not-allowed', opacity: isJoining ? 0.7 : 1 }}>

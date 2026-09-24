@@ -3,10 +3,12 @@
 const express   = require('express');
 const User      = require('../models/User');
 const Interview = require('../models/Interview');
+const Company   = require('../models/Company');
+const JobOpening = require('../models/JobOpening');
 const { protect, authorize } = require('../middleware/auth');
 
 const router = express.Router();
-router.use(protect, authorize('hr'));
+router.use(protect, authorize('hr', 'admin'));
 
 // Pipeline stages mapping
 const PIPELINE_STAGES = {
@@ -150,14 +152,16 @@ router.post('/evaluations', async (req, res) => {
   return res.status(201).json({ success: true, evaluation: trainee.hrEvaluation });
 });
 
-// GET /api/hr/interviews?traineeId=&status=
+// GET /api/hr/interviews?traineeId=&status=&company=&from=&to=
 router.get('/interviews', async (req, res) => {
-  const { traineeId, status } = req.query;
+  const { traineeId, status, company, from, to } = req.query;
   const filter = {};
   if (traineeId) filter.trainee = traineeId;
   if (status)    filter.status  = status;
+  if (company)   filter.company = company;
+  if (from || to) { filter.scheduledAt = {}; if (from) filter.scheduledAt.$gte = new Date(from); if (to) filter.scheduledAt.$lte = new Date(to); }
   const interviews = await Interview.find(filter)
-    .populate('trainee', 'name email').populate('scheduledBy', 'name').sort('-scheduledAt');
+    .populate('trainee', 'name email').populate('company', 'name').populate('job', 'title').populate('scheduledBy', 'name').sort('-scheduledAt');
   return res.json({ success: true, interviews });
 });
 
@@ -168,28 +172,48 @@ router.get('/interviews/:id', async (req, res) => {
   return res.json({ success: true, interview });
 });
 
-// POST /api/hr/interviews
-//   Body: { traineeId, type, scheduledAt, interviewerName?, interviewerEmail?, meetingLink?, notes? }
+// POST /api/hr/interviews (validated: no past, end>start, conflict check, company/job link)
+//   Body: { traineeId, scheduledAt, endAt?, company?, job?, role?, round?, mode?, ... }
 router.post('/interviews', async (req, res) => {
-  const { traineeId, type, scheduledAt } = req.body;
-  if (!traineeId || !type || !scheduledAt)
-    return res.status(400).json({ success: false, message: 'traineeId, type and scheduledAt required' });
-  const interview = await Interview.create({ trainee: traineeId, ...req.body, scheduledBy: req.user._id });
-  await User.findByIdAndUpdate(traineeId, { placementStatus: 'interview_scheduled' });
+  const { traineeId, scheduledAt, endAt, company, job } = req.body;
+  if (!traineeId || !scheduledAt)
+    return res.status(400).json({ success: false, message: 'traineeId and scheduledAt required' });
+  const start = new Date(scheduledAt);
+  if (Number.isNaN(start.getTime())) return res.status(400).json({ success: false, message: 'Invalid scheduledAt' });
+  if (start < new Date(Date.now() - 60 * 1000)) return res.status(400).json({ success: false, message: 'Cannot schedule in the past' });
+  if (endAt) { const e = new Date(endAt); if (Number.isNaN(e.getTime()) || e <= start) return res.status(400).json({ success: false, message: 'endAt must be after scheduledAt' }); }
+  const cand = await User.findOne({ _id: traineeId, role: 'trainee' });
+  if (!cand) return res.status(404).json({ success: false, message: 'Candidate not found' });
+  if (company) { const c = await Company.findById(company).catch(() => null); if (!c) return res.status(404).json({ success: false, message: 'Company not found' }); }
+  if (job) { const j = await JobOpening.findById(job).catch(() => null); if (!j) return res.status(404).json({ success: false, message: 'Job not found' }); }
+  const win = 60 * 60 * 1000;
+  const clash = await Interview.findOne({ trainee: traineeId, status: { $in: ['scheduled', 'confirmed', 'rescheduled'] }, scheduledAt: { $gte: new Date(start.getTime() - win), $lte: new Date(start.getTime() + win) } });
+  if (clash) return res.status(409).json({ success: false, message: 'Candidate already has an interview near this time' });
+  const interview = await Interview.create({ trainee: traineeId, type: req.body.type || 'placement', ...req.body, company: company || undefined, job: job || undefined, scheduledBy: req.user._id });
+  await User.findByIdAndUpdate(traineeId, { placementStatus: 'interview_scheduled', placementUpdatedAt: new Date() });
+  try {
+    const hrs = await User.find({ role: { $in: ['hr', 'admin'] }, isActive: true }).select('_id role').lean();
+    const { notifyUsers } = require('../utils/notificationService');
+    await notifyUsers(hrs.map((h, i) => ({ userId: h._id, role: h.role, module: 'HR', kind: 'interview_scheduled', type: 'interview_scheduled', title: 'Interview scheduled: ' + (cand.name || ''), message: new Date(start).toLocaleString('en-IN'), dedupeKey: `hr:iv:${interview._id}:${h._id}:${i}`, link: '/hr/interviews', meta: { interviewId: interview._id } })));
+  } catch (_) {}
   return res.status(201).json({ success: true, interview });
 });
 
-// PUT /api/hr/interviews/:id
-//   Body: { status?, outcome?, feedback?, score?, nextStep?, completedAt?, interviewerName?, meetingLink? }
+// PUT /api/hr/interviews/:id — status transitions (scheduled/confirmed/in_progress/completed/cancelled/rescheduled/no_show)
 router.put('/interviews/:id', async (req, res) => {
-  const interview = await Interview.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true })
-    .populate('trainee', 'name email');
+  const allowed = { scheduled: ['confirmed', 'cancelled', 'rescheduled'], confirmed: ['in_progress', 'completed', 'cancelled', 'rescheduled', 'no_show'], in_progress: ['completed', 'cancelled'], completed: [], cancelled: [], rescheduled: ['confirmed', 'cancelled'], no_show: ['rescheduled'] };
+  const interview = await Interview.findById(req.params.id).populate('trainee', 'name email');
   if (!interview) return res.status(404).json({ success: false, message: 'Interview not found' });
-  // Sync placement status when interview is completed with outcome
-  if (req.body.outcome === 'passed') {
-    await User.findByIdAndUpdate(interview.trainee._id, { placementStatus: 'placed' });
+  if (req.body.status && req.body.status !== interview.status) {
+    const from = allowed[interview.status] || [];
+    if (!from.includes(req.body.status)) return res.status(400).json({ success: false, message: `Invalid transition ${interview.status} → ${req.body.status}` });
+    if (req.body.status === 'completed') { req.body.completedAt = new Date(); await User.findByIdAndUpdate(interview.trainee._id || interview.trainee, { placementStatus: 'interview_done', placementUpdatedAt: new Date() }); }
+    if (req.body.status === 'cancelled') await User.findByIdAndUpdate(interview.trainee._id || interview.trainee, { placementUpdatedAt: new Date() });
   }
-  return res.json({ success: true, interview });
+  Object.assign(interview, req.body);
+  try { await interview.save(); } catch (e) { return res.status(400).json({ success: false, message: e.message }); }
+  const out = await Interview.findById(interview._id).populate('trainee', 'name email').populate('company', 'name').populate('job', 'title');
+  return res.json({ success: true, interview: out });
 });
 
 // DELETE /api/hr/interviews/:id

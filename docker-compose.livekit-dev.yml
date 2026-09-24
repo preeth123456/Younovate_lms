@@ -10,7 +10,11 @@ services:
       - redis-data:/data
 
   livekit:
-    image: livekit/livekit-server:latest
+    # Pinned to v1.13.x — MUST stay on the same minor version as livekit-egress.
+    # Floating `latest` tags previously pulled egress v1.14.1 against server
+    # v1.13.5; the PSRPC StartEgress request then got "no response from servers"
+    # (HTTP 503) and the backend surfaced it as "LiveKit Egress start timeout".
+    image: livekit/livekit-server:v1.13
     command: --bind 0.0.0.0 --config /etc/livekit.yaml
     restart: unless-stopped
     ports:
@@ -25,11 +29,21 @@ services:
       - LIVEKIT_REDIS_ADDR=redis:6379
 
   livekit-egress:
-    image: livekit/egress:latest
-    # Run as root so MP4s written to the bind mount are visible on Windows hosts.
-    user: "0:0"
+    # Pinned to v1.13.x — MUST match the livekit-server minor version above.
+    # See note on the `livekit` service: mismatched versions break StartEgress.
+    # NOTE: do NOT add `user: "0:0"` here. The image runs as its built-in
+    # `egress` user (uid 1001, pulse groups) which owns /home/egress/.cache.
+    # Forcing root breaks the PulseAudio probe, every health check then
+    # reports canAccept=false, and LiveKit never dispatches StartEgress
+    # ("no response from servers" → backend "Egress start timeout").
+    # The ./lms-recordings bind mount is world-writable so uid 1001 can write.
+    image: livekit/egress:v1.13
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c", "exec /tini -- egress --config /etc/egress.yaml"]
+    # Start a PulseAudio daemon before egress: room-composite recording needs
+    # a working PulseAudio server, otherwise every health check reports
+    # canAccept=false ("pulse clients") and LiveKit never dispatches
+    # StartEgress ("no response from servers" → "Egress start timeout").
+    entrypoint: ["/bin/sh", "-c", "pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1; exec /tini -- egress --config /etc/egress.yaml"]
     volumes:
       - ./lms-recordings:/out
       - ./egress.yaml:/etc/egress.yaml
